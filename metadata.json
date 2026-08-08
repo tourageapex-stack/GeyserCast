@@ -1,0 +1,10 @@
+{
+  "name": "GeyserCast",
+  "description": "Predict Yellowstone geyser eruptions, calculate arrival times, explore interactive maps, and query real GeyserTimes.org historical data with Gemini AI.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
