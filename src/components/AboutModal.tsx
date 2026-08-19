@@ -1,14 +1,13 @@
 import React from 'react';
-import { ExternalLink, Info, ShieldAlert, Database, Flame, Code } from 'lucide-react';
+import { ShieldAlert, Database, Flame } from 'lucide-react';
+import { GeyserCastLogo } from './GeyserCastLogo';
 
 export const AboutModal: React.FC = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-6 text-stone-100">
       <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
         <div className="flex items-center space-x-3 border-b border-stone-800 pb-4">
-          <div className="bg-amber-600 p-2.5 rounded-xl text-stone-950 font-bold">
-            <Info className="w-6 h-6" />
-          </div>
+          <GeyserCastLogo className="w-11 h-11" size={44} alt="GeyserCast" />
           <div>
             <h2 className="text-2xl font-bold text-amber-300">About GeyserCast</h2>
             <p className="text-xs text-stone-400">

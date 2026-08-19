@@ -2,6 +2,7 @@ import React from 'react';
 import { RefreshCw, Clock, Flame, Map, Layers, Compass, Bot, Activity, Info, Heart } from 'lucide-react';
 import { SyncStatus } from '../types';
 import { getMountainTimeNow } from '../utils/time';
+import { GeyserCastLogo } from './GeyserCastLogo';
 
 interface HeaderProps {
   activeTab: 'upcoming' | 'map' | 'all' | 'itinerary' | 'ai' | 'admin' | 'about';
@@ -49,9 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Top Banner */}
       <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
-          <div className="bg-amber-600 p-2 rounded-xl text-stone-950 font-bold shadow">
-            <Flame className="w-6 h-6 text-stone-950" />
-          </div>
+          <GeyserCastLogo className="w-10 h-10" size={40} />
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-amber-400">
               GeyserCast
