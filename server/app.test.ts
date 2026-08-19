@@ -34,6 +34,30 @@ describe('API app', () => {
   });
 });
 
+describe('Vercel fetch adapter', () => {
+  it('returns JSON from a Web Request to /api/health', async () => {
+    const { handleVercelRequest } = await import('./expressFetch');
+    const res = await handleVercelRequest(new Request('http://localhost/api/health'));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') || '', /json/i);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.geysers > 0);
+  });
+
+  it('restores nested /api paths from x-forwarded-uri', async () => {
+    const { handleVercelRequest } = await import('./expressFetch');
+    const res = await handleVercelRequest(
+      new Request('http://localhost/api', {
+        headers: { 'x-forwarded-uri': '/api/health' },
+      })
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+  });
+});
+
 describe('restoreVercelApiUrl', () => {
   it('rewrites req.url from x-forwarded-uri on Vercel', async () => {
     const prev = process.env.VERCEL;

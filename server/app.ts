@@ -9,7 +9,6 @@ import {
 import { handleGeyserPhotoProxy } from './imageProxy';
 import { generatePredictionForGeyser, runBacktestForGeyser, clearModelSelectionCache } from './predictionEngine';
 import { calculateRoute, evaluateCanIMakeIt } from './routing';
-import { queryGeyserAssistant, parseNaturalLanguageFilter } from './gemini';
 
 async function waitForSync(ms = 8000) {
   await Promise.race([
@@ -198,6 +197,7 @@ function createApiRouter(): Router {
   r.post('/ai/query', async (req, res) => {
     const { prompt, userLat, userLon } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt required' });
+    const { queryGeyserAssistant } = await import('./gemini');
     const answer = await queryGeyserAssistant(prompt, userLat, userLon);
     res.json({ answer });
   });
@@ -205,6 +205,7 @@ function createApiRouter(): Router {
   r.post('/ai/parse-filter', async (req, res) => {
     const { prompt } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt required' });
+    const { parseNaturalLanguageFilter } = await import('./gemini');
     res.json(await parseNaturalLanguageFilter(prompt));
   });
 
