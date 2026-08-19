@@ -10,6 +10,18 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { AboutModal } from './components/AboutModal';
 import { UpcomingGeyserItem, FilterState, SyncStatus, Geyser } from './types';
 
+async function readApiJson<T>(response: Response, label: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`${label} returned ${response.status} instead of JSON`);
+  }
+  const data = (await response.json()) as T & { error?: string };
+  if (!response.ok) {
+    throw new Error(data?.error || `${label} failed (${response.status})`);
+  }
+  return data;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'map' | 'all' | 'itinerary' | 'ai' | 'admin' | 'about'>('upcoming');
   const [items, setItems] = useState<UpcomingGeyserItem[]>([]);
@@ -108,11 +120,10 @@ export default function App() {
     setLoading(true);
     setFetchError(null);
     Promise.all([
-      fetch(`/api/predictions/upcoming?userLat=${userLat}&userLon=${userLon}&buffer=${safetyBuffer}&useAi=${useAi}`).then((r) => {
-        if (!r.ok) throw new Error(`Predictions failed (${r.status})`);
-        return r.json();
-      }),
-      fetch('/api/admin/status').then((r) => r.json()),
+      fetch(`/api/predictions/upcoming?userLat=${userLat}&userLon=${userLon}&buffer=${safetyBuffer}&useAi=${useAi}`).then((r) =>
+        readApiJson<UpcomingGeyserItem[]>(r, 'Predictions')
+      ),
+      fetch('/api/admin/status').then((r) => readApiJson<SyncStatus>(r, 'Sync status')),
     ])
       .then(([predData, syncData]) => {
         if (Array.isArray(predData)) setItems(predData);
@@ -121,7 +132,12 @@ export default function App() {
       })
       .catch((err) => {
         console.error('[Fetch Data Error]', err);
-        setFetchError('Could not load geyser predictions. Try refresh.');
+        const detail = err instanceof Error ? err.message : '';
+        setFetchError(
+          detail.includes('instead of JSON')
+            ? 'Could not load geyser predictions because the forecast API is missing from this deployment. Try refresh after the latest build.'
+            : 'Could not load geyser predictions. Try refresh.'
+        );
       })
       .finally(() => setLoading(false));
   };

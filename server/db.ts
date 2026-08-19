@@ -3,8 +3,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Geyser, Eruption, Prediction, OfficialPrediction } from './types';
 
-// Ensure data directory exists
-const dbDir = path.resolve(process.cwd(), 'data');
+const isServerless = Boolean(process.env.VERCEL);
+const dbDir = isServerless
+  ? path.join('/tmp', 'geysercast-data')
+  : path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
@@ -12,9 +14,10 @@ if (!fs.existsSync(dbDir)) {
 const dbPath = path.join(dbDir, 'geysers.sqlite');
 
 function createDbConnection(): DatabaseSync {
+  const journal = isServerless ? 'MEMORY' : 'WAL';
   try {
     const instance = new DatabaseSync(dbPath);
-    instance.exec('PRAGMA journal_mode = WAL;');
+    instance.exec(`PRAGMA journal_mode = ${journal};`);
     instance.exec('PRAGMA busy_timeout = 5000;');
     return instance;
   } catch (err: any) {
@@ -28,7 +31,7 @@ function createDbConnection(): DatabaseSync {
       console.error('[SQLite] Failed to remove malformed database files:', e);
     }
     const instance = new DatabaseSync(dbPath);
-    instance.exec('PRAGMA journal_mode = WAL;');
+    instance.exec(`PRAGMA journal_mode = ${journal};`);
     instance.exec('PRAGMA busy_timeout = 5000;');
     return instance;
   }
