@@ -7,11 +7,11 @@ const isServerless = Boolean(process.env.VERCEL);
 const dbDir = isServerless
   ? path.join('/tmp', 'geysercast-data')
   : path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(dbDir)) {
+if (!isServerless && !fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-const dbPath = path.join(dbDir, 'geysers.sqlite');
+const dbPath = isServerless ? ':memory:' : path.join(dbDir, 'geysers.sqlite');
 
 function createDbConnection(): DatabaseSync {
   const journal = isServerless ? 'MEMORY' : 'WAL';
