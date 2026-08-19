@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { Socket } from 'node:net';
+import { createApiApp } from './app';
 
 function methodHasBody(method: string) {
   const m = method.toUpperCase();
@@ -119,7 +120,6 @@ export async function dispatchExpress(app: Express, request: Request): Promise<R
 
 export async function handleVercelRequest(request: Request): Promise<Response> {
   try {
-    const { createApiApp } = await import('./app');
     const app = await createApiApp();
     return await dispatchExpress(app, request);
   } catch (err: any) {
