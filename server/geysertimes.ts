@@ -577,7 +577,7 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
       if (ingestEntry(entry)) addedCount += 1;
     }
 
-    if (shouldRefreshHistory()) {
+    if (shouldRefreshHistory() && !process.env.VERCEL) {
       const nowSec = Math.floor(Date.now() / 1000);
       const fromSec = nowSec - HISTORY_WINDOW_DAYS * 24 * 3600;
       const historyPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
@@ -609,4 +609,27 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   }
 
   return getGlobalSyncStatus();
+}
+
+let syncInFlight: Promise<SyncStatus> | null = null;
+let lastSuccessfulSyncMs = 0;
+const SERVERLESS_SYNC_TTL_MS = 5 * 60 * 1000;
+
+/** Deduped sync for serverless cold starts. Skips bulky history on Vercel. */
+export function ensureGeyserTimesSync(): Promise<SyncStatus> {
+  const ttl = process.env.VERCEL ? SERVERLESS_SYNC_TTL_MS : 15 * 60 * 1000;
+  if (lastSuccessfulSyncMs && Date.now() - lastSuccessfulSyncMs < ttl && getTotalEruptionCount() > 0) {
+    return Promise.resolve(getGlobalSyncStatus());
+  }
+  if (!syncInFlight) {
+    syncInFlight = syncWithGeyserTimes()
+      .then((status) => {
+        if (status.status !== 'error') lastSuccessfulSyncMs = Date.now();
+        return status;
+      })
+      .finally(() => {
+        syncInFlight = null;
+      });
+  }
+  return syncInFlight;
 }
