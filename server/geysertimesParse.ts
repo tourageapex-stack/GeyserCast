@@ -40,6 +40,102 @@ export interface GeyserTimesPrediction {
   predictionID?: string;
 }
 
+export interface GeyserTimesGeyser {
+  id?: string;
+  name?: string;
+  timezone?: string;
+  groupID?: string;
+  latitude?: string | number;
+  longitude?: string | number;
+  groupName?: string;
+}
+
+export const YELLOWSTONE_GROUP_TO_BASIN: Record<string, string> = {
+  'Common UGB Geysers': 'Upper Geyser Basin',
+  'Uncommon UGB Geysers': 'Upper Geyser Basin',
+  'Lower Geyser Basin': 'Lower Geyser Basin',
+  'Norris Geyser Basin': 'Norris Geyser Basin',
+  'West Thumb Geyser Basin': 'West Thumb Geyser Basin',
+  'Midway Geyser Basin': 'Midway Geyser Basin',
+  'Lone Star Geyser Basin': 'Lone Star Basin',
+  'Gibbon Geyser Basin': 'Gibbon Geyser Basin',
+  'Mud Volcano Area': 'Mud Volcano',
+  'Shoshone Geyser Basin': 'Shoshone Geyser Basin',
+};
+
+const SKIP_GEYSER_NAME = /^(event non-geyser|other geyser|deleted\b)/i;
+
+export function slugifyGeyserName(name: string, geysertimesId?: number): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || (geysertimesId != null ? `gt-${geysertimesId}` : 'geyser');
+}
+
+/** Yellowstone thermal features from GeyserTimes; skip NZ/Iceland and placeholder rows. */
+export function shouldImportGtGeyser(raw: GeyserTimesGeyser): boolean {
+  const groupName = String(raw.groupName || '').trim();
+  if (!YELLOWSTONE_GROUP_TO_BASIN[groupName]) return false;
+
+  const name = String(raw.name || '').trim();
+  if (!name || SKIP_GEYSER_NAME.test(name)) return false;
+
+  const lat = Number(raw.latitude);
+  const lon = Number(raw.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  if (lat < 44 || lat > 45.2 || lon < -111.4 || lon > -109.8) return false;
+
+  const gtId = Number(raw.id);
+  return Number.isFinite(gtId) && gtId > 0;
+}
+
+export function geyserFromGeyserTimes(raw: GeyserTimesGeyser): {
+  id: string;
+  geysertimesId: number;
+  name: string;
+  normalizedName: string;
+  alternateNames: string[];
+  basin: string;
+  area: string;
+  latitude: number;
+  longitude: number;
+  metadata: {
+    typicalIntervalMinutes: number;
+    durationMinutes: number;
+    predictability: string;
+    thermalType: string;
+    description: string;
+  };
+} | null {
+  if (!shouldImportGtGeyser(raw)) return null;
+
+  const geysertimesId = Number(raw.id);
+  const name = String(raw.name).trim();
+  const groupName = String(raw.groupName).trim();
+  const basin = YELLOWSTONE_GROUP_TO_BASIN[groupName];
+
+  return {
+    id: slugifyGeyserName(name, geysertimesId),
+    geysertimesId,
+    name,
+    normalizedName: name.toLowerCase(),
+    alternateNames: [],
+    basin,
+    area: groupName,
+    latitude: Number(raw.latitude),
+    longitude: Number(raw.longitude),
+    metadata: {
+      typicalIntervalMinutes: 94,
+      durationMinutes: 3,
+      predictability: 'Unknown',
+      thermalType: 'Geyser',
+      description: `${name} in ${basin}.`,
+    },
+  };
+}
+
 /** Normalize GeyserTimes datetimes (epoch, +0000, -0600) to UTC ISO. */
 export function parseGtDate(value: string | number | null | undefined): string | null {
   if (value == null || value === '') return null;

@@ -58,8 +58,18 @@ async function fetchImageBuffer(url: string): Promise<{ data: Buffer; contentTyp
 }
 
 export async function handleGeyserPhotoProxy(req: Request, res: Response) {
-  const matchKey = matchGeyserPhotoKey(req.params.id || '');
-  const spec = GEYSER_PHOTOS[matchKey];
+  const rawId = req.params.id || '';
+  const matchKey = matchGeyserPhotoKey(rawId);
+  const spec = matchKey ? GEYSER_PHOTOS[matchKey] : undefined;
+
+  if (!spec || !matchKey) {
+    const label = rawId.replace(/-/g, ' ') || 'Geyser';
+    const svg = geyserPhotoPlaceholderSvg(label);
+    res.status(200);
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.send(svg);
+  }
 
   const cached = imageCache.get(matchKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_MS) {
@@ -99,5 +109,5 @@ export async function handleGeyserPhotoProxy(req: Request, res: Response) {
 
 export function getGeyserPhotoInfo(geyserId: string) {
   const key = matchGeyserPhotoKey(geyserId);
-  return GEYSER_PHOTOS[key];
+  return key ? GEYSER_PHOTOS[key] : undefined;
 }

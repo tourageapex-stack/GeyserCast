@@ -91,13 +91,10 @@ export const GEYSER_PHOTOS: Record<string, GeyserPhotoSpec> = {
   },
 };
 
-export function matchGeyserPhotoKey(geyserId: string): string {
+export function matchGeyserPhotoKey(geyserId: string): string | undefined {
   const normId = geyserId.toLowerCase().trim();
   if (GEYSER_PHOTOS[normId]) return normId;
-  const found = Object.keys(GEYSER_PHOTOS).find(
-    (key) => normId.includes(key) || key.includes(normId)
-  );
-  return found || 'old-faithful';
+  return Object.keys(GEYSER_PHOTOS).find((key) => normId === key || normId.startsWith(`${key}-`));
 }
 
 export function geyserPhotoPlaceholderSvg(label: string): string {

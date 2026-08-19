@@ -294,8 +294,7 @@ function applyModel(model, lastEruption, intervals) {
 }
 function canAdvanceMissedCycles(geyser, predictedInterval) {
   const typical = Number(geyser.metadata?.typicalIntervalMinutes) || predictedInterval;
-  const predictability = String(geyser.metadata?.predictability || "");
-  return typical > 0 && typical <= 180 && /high/i.test(predictability);
+  return typical > 0 && typical <= 360;
 }
 function buildFeatures(lastEruption, now, histMedian, histMean, predictedInterval, obsCount, uncertaintyMin) {
   const lastTimeMs = lastEruption ? new Date(lastEruption.eruptionTime).getTime() : now.getTime();
@@ -356,17 +355,17 @@ function generatePredictionForGeyser(geyser, eruptions2, useAi = false) {
     }
   }
   if (!lastEruption) {
-    const predictedMs2 = now.getTime() + fallbackInterval * 60 * 1e3;
+    const predictedMs2 = now.getTime() + 60 * 24 * 60 * 60 * 1e3;
     return {
-      id: `pred-${geyser.id}-${Date.now()}`,
+      id: `pred-${geyser.id}-nodata`,
       geyserId: geyser.id,
       createdAt: now.toISOString(),
       predictedTime: new Date(predictedMs2).toISOString(),
       windowStart: new Date(predictedMs2 - 15 * 60 * 1e3).toISOString(),
       windowEnd: new Date(predictedMs2 + 15 * 60 * 1e3).toISOString(),
-      confidence: 45,
+      confidence: 30,
       modelName: useAi ? "Statistical Estimate" : "Interval Estimate",
-      modelVersion: useAi ? "v2.1 (local models)" : "Typical interval fallback",
+      modelVersion: "No recent GeyserTimes eruption",
       features: buildFeatures(null, now, fallbackInterval, fallbackInterval, fallbackInterval, 0, 15)
     };
   }
@@ -397,7 +396,7 @@ function generatePredictionForGeyser(geyser, eruptions2, useAi = false) {
   const overdueThresholdMs = 30 * 60 * 1e3;
   if (predictedMs < now.getTime() - overdueThresholdMs && predictedInterval > 0 && canAdvanceMissedCycles(geyser, predictedInterval)) {
     const lastAgeMs = now.getTime() - lastTimeMs;
-    const maxStaleMs = Math.min(24 * 3600 * 1e3, Math.max(6 * 3600 * 1e3, predictedInterval * 3 * 60 * 1e3));
+    const maxStaleMs = predictedInterval <= 180 ? 24 * 3600 * 1e3 : Math.min(24 * 3600 * 1e3, Math.max(6 * 3600 * 1e3, predictedInterval * 3 * 60 * 1e3));
     if (lastAgeMs <= maxStaleMs) {
       const elapsedSincePredicted = now.getTime() - predictedMs;
       const intervalMs = predictedInterval * 60 * 1e3;
@@ -477,7 +476,11 @@ Available Basins in Yellowstone:
 - Lower Geyser Basin
 - Norris Geyser Basin
 - Midway Geyser Basin
+- West Thumb Geyser Basin
 - Lone Star Basin
+- Gibbon Geyser Basin
+- Mud Volcano
+- Shoshone Geyser Basin
 
 Return a JSON object containing any identified parameters.`,
       config: {
@@ -528,7 +531,7 @@ async function queryGeyserAssistant(userPrompt, userLat, userLon) {
         historicalMedianMin: pred.features.historicalMedianMinutes,
         usableObservations: pred.features.usableObservationsCount
       };
-    });
+    }).filter((row) => row.minutesUntilEruption >= -360 && row.minutesUntilEruption <= 36 * 60).sort((a, b) => a.minutesUntilEruption - b.minutesUntilEruption).slice(0, 80);
     const ai = getAiClient();
     const promptContext = `You are the official Yellowstone Geyser Assistant. You must ALWAYS use the real structured prediction data provided below to answer visitor questions.
 CRITICAL RULES:
@@ -578,6 +581,60 @@ import express from "express";
 init_db();
 
 // server/geysertimesParse.ts
+var YELLOWSTONE_GROUP_TO_BASIN = {
+  "Common UGB Geysers": "Upper Geyser Basin",
+  "Uncommon UGB Geysers": "Upper Geyser Basin",
+  "Lower Geyser Basin": "Lower Geyser Basin",
+  "Norris Geyser Basin": "Norris Geyser Basin",
+  "West Thumb Geyser Basin": "West Thumb Geyser Basin",
+  "Midway Geyser Basin": "Midway Geyser Basin",
+  "Lone Star Geyser Basin": "Lone Star Basin",
+  "Gibbon Geyser Basin": "Gibbon Geyser Basin",
+  "Mud Volcano Area": "Mud Volcano",
+  "Shoshone Geyser Basin": "Shoshone Geyser Basin"
+};
+var SKIP_GEYSER_NAME = /^(event non-geyser|other geyser|deleted\b)/i;
+function slugifyGeyserName(name, geysertimesId) {
+  const slug = name.toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || (geysertimesId != null ? `gt-${geysertimesId}` : "geyser");
+}
+function shouldImportGtGeyser(raw) {
+  const groupName = String(raw.groupName || "").trim();
+  if (!YELLOWSTONE_GROUP_TO_BASIN[groupName]) return false;
+  const name = String(raw.name || "").trim();
+  if (!name || SKIP_GEYSER_NAME.test(name)) return false;
+  const lat = Number(raw.latitude);
+  const lon = Number(raw.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  if (lat < 44 || lat > 45.2 || lon < -111.4 || lon > -109.8) return false;
+  const gtId = Number(raw.id);
+  return Number.isFinite(gtId) && gtId > 0;
+}
+function geyserFromGeyserTimes(raw) {
+  if (!shouldImportGtGeyser(raw)) return null;
+  const geysertimesId = Number(raw.id);
+  const name = String(raw.name).trim();
+  const groupName = String(raw.groupName).trim();
+  const basin = YELLOWSTONE_GROUP_TO_BASIN[groupName];
+  return {
+    id: slugifyGeyserName(name, geysertimesId),
+    geysertimesId,
+    name,
+    normalizedName: name.toLowerCase(),
+    alternateNames: [],
+    basin,
+    area: groupName,
+    latitude: Number(raw.latitude),
+    longitude: Number(raw.longitude),
+    metadata: {
+      typicalIntervalMinutes: 94,
+      durationMinutes: 3,
+      predictability: "Unknown",
+      thermalType: "Geyser",
+      description: `${name} in ${basin}.`
+    }
+  };
+}
 function parseGtDate(value) {
   if (value == null || value === "") return null;
   if (typeof value === "number" || /^\d+(\.\d+)?$/.test(String(value).trim())) {
@@ -1141,17 +1198,39 @@ function ingestEntry(entry) {
   });
   return true;
 }
+function ingestGeyserCatalog(gtGeysers) {
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const usedIds = new Set(getAllGeysers().map((g) => g.id));
+  for (const raw of gtGeysers) {
+    const parsed = geyserFromGeyserTimes(raw);
+    if (!parsed) continue;
+    const existing = getGeyserById(String(parsed.geysertimesId));
+    if (existing) {
+      upsertGeyser({
+        ...existing,
+        lastUpdated: nowIso,
+        latitude: existing.latitude || parsed.latitude,
+        longitude: existing.longitude || parsed.longitude
+      });
+      continue;
+    }
+    let id = parsed.id;
+    if (usedIds.has(id)) id = `${id}-${parsed.geysertimesId}`;
+    usedIds.add(id);
+    upsertGeyser({ ...parsed, id, lastUpdated: nowIso });
+  }
+}
 function ingestOfficialPredictions(predictions) {
   const fetchedAt = (/* @__PURE__ */ new Date()).toISOString();
-  for (const seed of SEED_GEYSERS) {
-    const picked = pickOfficialPrediction(predictions, seed.geysertimesId);
+  for (const geyser of getAllGeysers()) {
+    const picked = pickOfficialPrediction(predictions, geyser.geysertimesId);
     if (!picked) continue;
     const predictedTime = parseGtDate(picked.prediction);
     if (!predictedTime) continue;
     const windowStart = parseGtDate(picked.windowOpen) || predictedTime;
     const windowEnd = parseGtDate(picked.windowClose) || predictedTime;
     upsertOfficialPrediction({
-      geyserId: seed.id,
+      geyserId: geyser.id,
       predictedTime,
       windowStart,
       windowEnd,
@@ -1185,15 +1264,24 @@ async function syncWithGeyserTimes() {
   let addedCount = 0;
   try {
     const ids = featuredGeyserTimesIds().join(";");
+    const catalogPayload = await fetchGtJson(
+      `/geysers`
+    );
+    if (Array.isArray(catalogPayload.geysers)) {
+      ingestGeyserCatalog(catalogPayload.geysers);
+    }
     const predPayload = await fetchGtJson(
       `/predictions_latest?iso=1`
     );
     if (Array.isArray(predPayload.predictions)) {
       ingestOfficialPredictions(predPayload.predictions);
     }
-    const latestPayload = await fetchGtJson(
-      `/entries_latest/${ids}?iso=1`
-    );
+    let latestPayload;
+    try {
+      latestPayload = await fetchGtJson(`/entries_latest?iso=1`);
+    } catch {
+      latestPayload = await fetchGtJson(`/entries_latest/${ids}?iso=1`);
+    }
     for (const entry of latestPayload.entries || []) {
       if (ingestEntry(entry)) addedCount += 1;
     }
@@ -1335,10 +1423,7 @@ var GEYSER_PHOTOS = {
 function matchGeyserPhotoKey(geyserId) {
   const normId = geyserId.toLowerCase().trim();
   if (GEYSER_PHOTOS[normId]) return normId;
-  const found = Object.keys(GEYSER_PHOTOS).find(
-    (key) => normId.includes(key) || key.includes(normId)
-  );
-  return found || "old-faithful";
+  return Object.keys(GEYSER_PHOTOS).find((key) => normId === key || normId.startsWith(`${key}-`));
 }
 function geyserPhotoPlaceholderSvg(label) {
   const safe = label.replace(/[<>&]/g, "");
@@ -1392,8 +1477,17 @@ async function fetchImageBuffer(url) {
   return { data, contentType };
 }
 async function handleGeyserPhotoProxy(req, res) {
-  const matchKey = matchGeyserPhotoKey(req.params.id || "");
-  const spec = GEYSER_PHOTOS[matchKey];
+  const rawId = req.params.id || "";
+  const matchKey = matchGeyserPhotoKey(rawId);
+  const spec = matchKey ? GEYSER_PHOTOS[matchKey] : void 0;
+  if (!spec || !matchKey) {
+    const label = rawId.replace(/-/g, " ") || "Geyser";
+    const svg2 = geyserPhotoPlaceholderSvg(label);
+    res.status(200);
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=60");
+    return res.send(svg2);
+  }
   const cached = imageCache.get(matchKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_MS) {
     res.setHeader("Content-Type", cached.contentType);
@@ -1526,7 +1620,8 @@ function createApiRouter() {
   r.get("/health", (_req, res) => {
     res.json({ ok: true, geysers: getAllGeysers().length });
   });
-  r.get("/geysers", (_req, res) => {
+  r.get("/geysers", async (_req, res) => {
+    await waitForSync();
     res.json(getAllGeysers());
   });
   r.get("/geyser-photo/:id", handleGeyserPhotoProxy);
@@ -1535,11 +1630,13 @@ function createApiRouter() {
     if (!geyser) return res.status(404).json({ error: "Geyser not found" });
     res.json(geyser);
   });
-  r.get("/basins", (_req, res) => {
+  r.get("/basins", async (_req, res) => {
+    await waitForSync();
     const basins = Array.from(new Set(getAllGeysers().map((g) => g.basin))).sort();
     res.json(basins);
   });
-  r.get("/areas", (_req, res) => {
+  r.get("/areas", async (_req, res) => {
+    await waitForSync();
     const areas = Array.from(new Set(getAllGeysers().map((g) => g.area))).sort();
     res.json(areas);
   });
@@ -1667,7 +1764,7 @@ function createApiRouter() {
   });
   r.get("/admin/backtest", (_req, res) => {
     res.json(
-      getAllGeysers().map((g) => runBacktestForGeyser(g, getEruptionsForGeyser(g.id, 200), "EWMA"))
+      getAllGeysers().filter((g) => Array.isArray(g.metadata?.funFacts) || getEruptionsForGeyser(g.id, 20).length >= 10).map((g) => runBacktestForGeyser(g, getEruptionsForGeyser(g.id, 200), "EWMA"))
     );
   });
   return r;

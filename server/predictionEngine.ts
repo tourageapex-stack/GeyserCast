@@ -261,8 +261,10 @@ function applyModel(model: ModelType, lastEruption: Eruption, intervals: number[
 
 function canAdvanceMissedCycles(geyser: Geyser, predictedInterval: number): boolean {
   const typical = Number(geyser.metadata?.typicalIntervalMinutes) || predictedInterval;
-  const predictability = String(geyser.metadata?.predictability || '');
-  return typical > 0 && typical <= 180 && /high/i.test(predictability);
+  // Frequent/regular geysers can roll the window forward when the last logged
+  // eruption is still recent. Long-interval features (Castle, Steamboat) stay
+  // on the raw last+interval estimate or official GeyserTimes windows.
+  return typical > 0 && typical <= 360;
 }
 
 function buildFeatures(
@@ -340,17 +342,18 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
   }
 
   if (!lastEruption) {
-    const predictedMs = now.getTime() + fallbackInterval * 60 * 1000;
+    // Keep these in the catalog/map, but out of the visitor "erupting soon" horizon.
+    const predictedMs = now.getTime() + 60 * 24 * 60 * 60 * 1000;
     return {
-      id: `pred-${geyser.id}-${Date.now()}`,
+      id: `pred-${geyser.id}-nodata`,
       geyserId: geyser.id,
       createdAt: now.toISOString(),
       predictedTime: new Date(predictedMs).toISOString(),
       windowStart: new Date(predictedMs - 15 * 60 * 1000).toISOString(),
       windowEnd: new Date(predictedMs + 15 * 60 * 1000).toISOString(),
-      confidence: 45,
+      confidence: 30,
       modelName: useAi ? 'Statistical Estimate' : 'Interval Estimate',
-      modelVersion: useAi ? 'v2.1 (local models)' : 'Typical interval fallback',
+      modelVersion: 'No recent GeyserTimes eruption',
       features: buildFeatures(null, now, fallbackInterval, fallbackInterval, fallbackInterval, 0, 15),
     };
   }
@@ -386,7 +389,10 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
   const overdueThresholdMs = 30 * 60 * 1000;
   if (predictedMs < now.getTime() - overdueThresholdMs && predictedInterval > 0 && canAdvanceMissedCycles(geyser, predictedInterval)) {
     const lastAgeMs = now.getTime() - lastTimeMs;
-    const maxStaleMs = Math.min(24 * 3600 * 1000, Math.max(6 * 3600 * 1000, predictedInterval * 3 * 60 * 1000));
+    const maxStaleMs =
+      predictedInterval <= 180
+        ? 24 * 3600 * 1000
+        : Math.min(24 * 3600 * 1000, Math.max(6 * 3600 * 1000, predictedInterval * 3 * 60 * 1000));
     if (lastAgeMs <= maxStaleMs) {
       const elapsedSincePredicted = now.getTime() - predictedMs;
       const intervalMs = predictedInterval * 60 * 1000;

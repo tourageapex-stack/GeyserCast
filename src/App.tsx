@@ -273,23 +273,24 @@ export default function App() {
   }, [items, filters, favorites]);
 
   const catalogItems = useMemo(() => {
-    return items.filter((item) => {
-      const { geyser, prediction } = item;
-      if (filters.searchQuery) {
-        const q = filters.searchQuery.toLowerCase().trim();
-        const matchName = geyser.name.toLowerCase().includes(q);
-        const matchNormalized = geyser.normalizedName.includes(q);
-        const matchBasin = geyser.basin.toLowerCase().includes(q);
-        const matchArea = geyser.area.toLowerCase().includes(q);
-        const matchAlt = geyser.alternateNames.some((alt) => alt.toLowerCase().includes(q));
-        if (!matchName && !matchNormalized && !matchBasin && !matchArea && !matchAlt) return false;
-      }
-      if (filters.selectedBasins.length > 0 && !filters.selectedBasins.includes(geyser.basin)) return false;
-      if (filters.onlyFavorites && !favorites.includes(geyser.id)) return false;
-      if (prediction.confidence < filters.minConfidence) return false;
-      return true;
-    });
-  }, [items, filters.searchQuery, filters.selectedBasins, filters.onlyFavorites, filters.minConfidence, favorites]);
+    return items
+      .filter((item) => {
+        const { geyser } = item;
+        if (filters.searchQuery) {
+          const q = filters.searchQuery.toLowerCase().trim();
+          const matchName = geyser.name.toLowerCase().includes(q);
+          const matchNormalized = geyser.normalizedName.includes(q);
+          const matchBasin = geyser.basin.toLowerCase().includes(q);
+          const matchArea = geyser.area.toLowerCase().includes(q);
+          const matchAlt = geyser.alternateNames.some((alt) => alt.toLowerCase().includes(q));
+          if (!matchName && !matchNormalized && !matchBasin && !matchArea && !matchAlt) return false;
+        }
+        if (filters.selectedBasins.length > 0 && !filters.selectedBasins.includes(geyser.basin)) return false;
+        if (filters.onlyFavorites && !favorites.includes(geyser.id)) return false;
+        return true;
+      })
+      .sort((a, b) => a.geyser.name.localeCompare(b.geyser.name));
+  }, [items, filters.searchQuery, filters.selectedBasins, filters.onlyFavorites, favorites]);
 
   const notifiedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -607,7 +608,7 @@ export default function App() {
         {/* TAB 2: Interactive Map */}
         {activeTab === 'map' && (
           <GeyserMap
-            items={filteredItems}
+            items={catalogItems}
             userLat={userLat}
             userLon={userLon}
             selectedGeyserId={selectedGeyserId}
@@ -620,6 +621,17 @@ export default function App() {
         {activeTab === 'all' && (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
             <h3 className="text-lg font-bold text-amber-300">All Yellowstone Geysers Repository</h3>
+            <p className="text-xs text-stone-400">
+              Showing {catalogItems.length} Yellowstone features from GeyserTimes.org
+              {items.length > 0 ? ` (${items.length} in the live catalog)` : ''}
+            </p>
+            {loading ? (
+              <div className="p-12 text-center text-amber-400 font-bold animate-pulse">
+                Loading the GeyserTimes Yellowstone catalog...
+              </div>
+            ) : catalogItems.length === 0 ? (
+              <div className="p-12 text-center text-stone-400">No geysers match your active filters.</div>
+            ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               {catalogItems.map(({ geyser, prediction }) => (
                 <div
@@ -644,6 +656,7 @@ export default function App() {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 

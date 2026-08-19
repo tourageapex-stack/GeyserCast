@@ -31,6 +31,7 @@ describe('geyser photos', () => {
   it('matches geyser ids without falling through to Old Faithful', () => {
     assert.equal(matchGeyserPhotoKey('beehive'), 'beehive');
     assert.equal(matchGeyserPhotoKey('Great-Fountain'), 'great-fountain');
-    assert.equal(matchGeyserPhotoKey('unknown-vent'), 'old-faithful');
+    assert.equal(matchGeyserPhotoKey('unknown-vent'), undefined);
+    assert.equal(matchGeyserPhotoKey('old-tardy'), undefined);
   });
 });

@@ -32,6 +32,33 @@ describe('API app', () => {
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
   });
+
+  it('loads the GeyserTimes Yellowstone catalog on /api/geysers', async () => {
+    const app = await createApiApp();
+    const { server, base } = await listen(app);
+    try {
+      const res = await fetch(`${base}/api/geysers`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.ok(Array.isArray(body));
+      assert.ok(body.length > 50, `expected a full catalog, got ${body.length}`);
+      const names = new Set(body.map((g: { name: string }) => g.name));
+      assert.ok(names.has('Old Faithful'));
+      assert.ok(names.has('Lion') || names.has('Aurum') || names.has('Sawmill'));
+
+      const upcoming = await fetch(`${base}/api/predictions/upcoming`);
+      assert.equal(upcoming.status, 200);
+      const feed = await upcoming.json();
+      assert.ok(Array.isArray(feed));
+      assert.ok(feed.length > 50, `expected upcoming catalog items, got ${feed.length}`);
+      const liveWindow = feed.filter((item: { minutesUntilEruption: number }) => {
+        return item.minutesUntilEruption >= -360 && item.minutesUntilEruption <= 36 * 60;
+      });
+      assert.ok(liveWindow.length > 8, `expected more than 8 visitor-window geysers, got ${liveWindow.length}`);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
 });
 
 describe('Vercel fetch adapter', () => {
