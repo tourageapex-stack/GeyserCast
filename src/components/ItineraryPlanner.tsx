@@ -29,7 +29,7 @@ export const ItineraryPlanner: React.FC<ItineraryPlannerProps> = ({
   const fetchItinerary = () => {
     setLoading(true);
     const minutes = availableHours * 60;
-    fetch(`/api/itinerary?userLat=${userLat}&userLon=${userLon}&minutes=${minutes}&buffer=${safetyBuffer}`)
+    fetch(`/api/itinerary?userLat=${userLat}&userLon=${userLon}&minutes=${minutes}&buffer=${safetyBuffer}&mode=${travelMode}`)
       .then((r) => r.json())
       .then((data) => {
         if (data && Array.isArray(data.itinerary)) {

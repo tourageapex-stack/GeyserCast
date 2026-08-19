@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Filter, RefreshCw, SlidersHorizontal, MapPin, Heart, Bell, X, Check, Flame, Clock, ArrowUpDown, Navigation } from 'lucide-react';
 import { Header } from './components/Header';
 import { PredictionCard } from './components/PredictionCard';
@@ -15,6 +15,7 @@ export default function App() {
   const [items, setItems] = useState<UpcomingGeyserItem[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // User Location (Default: Old Faithful Visitor Center)
   const [userLat, setUserLat] = useState<number>(44.4596);
@@ -68,11 +69,27 @@ export default function App() {
     sortBy: 'time',
   });
 
-  // Fetch initial predictions & basins/areas
+  const resetFilters = () => {
+    setFilters({
+      searchQuery: '',
+      selectedGeysers: [],
+      selectedBasins: [],
+      selectedAreas: [],
+      timeWindowRange: 'all',
+      minConfidence: 30,
+      maxDistanceMiles: null,
+      onlyFavorites: false,
+      sortBy: 'time',
+    });
+  };
+
   useEffect(() => {
-    fetchData();
     fetchBasinsAndAreas();
     requestBrowserLocation();
+  }, []);
+
+  useEffect(() => {
+    fetchData();
   }, [userLat, userLon, safetyBuffer, useAi]);
 
   useEffect(() => {
@@ -89,15 +106,23 @@ export default function App() {
 
   const fetchData = () => {
     setLoading(true);
+    setFetchError(null);
     Promise.all([
-      fetch(`/api/predictions/upcoming?userLat=${userLat}&userLon=${userLon}&buffer=${safetyBuffer}&useAi=${useAi}`).then((r) => r.json()),
+      fetch(`/api/predictions/upcoming?userLat=${userLat}&userLon=${userLon}&buffer=${safetyBuffer}&useAi=${useAi}`).then((r) => {
+        if (!r.ok) throw new Error(`Predictions failed (${r.status})`);
+        return r.json();
+      }),
       fetch('/api/admin/status').then((r) => r.json()),
     ])
       .then(([predData, syncData]) => {
         if (Array.isArray(predData)) setItems(predData);
+        else setFetchError('Unexpected prediction response from the server.');
         if (syncData) setSyncStatus(syncData);
       })
-      .catch((err) => console.error('[Fetch Data Error]', err))
+      .catch((err) => {
+        console.error('[Fetch Data Error]', err);
+        setFetchError('Could not load geyser predictions. Try refresh.');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -115,7 +140,7 @@ export default function App() {
           setUserLocationName('My GPS Location');
           showToast('Updated location to current browser GPS position');
         },
-        (err) => {
+        () => {
           console.log('[Geolocation declined/unavailable, using Old Faithful coordinates]');
         }
       );
@@ -231,6 +256,44 @@ export default function App() {
       }
     });
   }, [items, filters, favorites]);
+
+  const catalogItems = useMemo(() => {
+    return items.filter((item) => {
+      const { geyser, prediction } = item;
+      if (filters.searchQuery) {
+        const q = filters.searchQuery.toLowerCase().trim();
+        const matchName = geyser.name.toLowerCase().includes(q);
+        const matchNormalized = geyser.normalizedName.includes(q);
+        const matchBasin = geyser.basin.toLowerCase().includes(q);
+        const matchArea = geyser.area.toLowerCase().includes(q);
+        const matchAlt = geyser.alternateNames.some((alt) => alt.toLowerCase().includes(q));
+        if (!matchName && !matchNormalized && !matchBasin && !matchArea && !matchAlt) return false;
+      }
+      if (filters.selectedBasins.length > 0 && !filters.selectedBasins.includes(geyser.basin)) return false;
+      if (filters.onlyFavorites && !favorites.includes(geyser.id)) return false;
+      if (prediction.confidence < filters.minConfidence) return false;
+      return true;
+    });
+  }, [items, filters.searchQuery, filters.selectedBasins, filters.onlyFavorites, filters.minConfidence, favorites]);
+
+  const notifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    items.forEach((item) => {
+      if (!followed.includes(item.geyser.id)) return;
+      if (item.minutesUntilEruption <= 0 || item.minutesUntilEruption > 15) return;
+      const key = `${item.geyser.id}-${item.prediction.predictedTime}`;
+      if (notifiedRef.current.has(key)) return;
+      notifiedRef.current.add(key);
+      try {
+        new Notification(`${item.geyser.name} is predicted soon`, {
+          body: `Eruption window in about ${item.minutesUntilEruption} minutes.`,
+        });
+      } catch {
+        // Ignore browsers that block constructed notifications.
+      }
+    });
+  }, [items, followed]);
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans antialiased selection:bg-amber-500 selection:text-stone-950">
@@ -357,19 +420,7 @@ export default function App() {
                 <span>Multi-Criteria Filters & Sorting</span>
               </span>
               <button
-                onClick={() =>
-                  setFilters({
-                    searchQuery: '',
-                    selectedGeysers: [],
-                    selectedBasins: [],
-                    selectedAreas: [],
-                    timeWindowRange: 'all',
-                    minConfidence: 30,
-                    maxDistanceMiles: null,
-                    onlyFavorites: false,
-                    sortBy: 'time',
-                  })
-                }
+                onClick={resetFilters}
                 className="text-stone-400 hover:text-amber-400 underline font-medium"
               >
                 Reset All Filters
@@ -498,24 +549,20 @@ export default function App() {
 
             {loading ? (
               <div className="p-12 text-center text-amber-400 font-bold animate-pulse">
-                Fetching real GeyserTimes predictions & travel routes...
+                Fetching GeyserTimes predictions & travel routes...
+              </div>
+            ) : fetchError ? (
+              <div className="p-12 text-center bg-stone-900 rounded-2xl border border-rose-800 text-stone-400 space-y-2">
+                <p className="font-bold text-stone-200">{fetchError}</p>
+                <button onClick={fetchData} className="text-amber-400 hover:underline font-bold text-xs">
+                  Retry
+                </button>
               </div>
             ) : filteredItems.length === 0 ? (
               <div className="p-12 text-center bg-stone-900 rounded-2xl border border-stone-800 text-stone-400 space-y-2">
                 <p className="font-bold text-stone-200">No geyser predictions match your active filters.</p>
                 <button
-                  onClick={() =>
-                    setFilters({
-                      searchQuery: '',
-                      selectedGeysers: [],
-                      selectedBasins: [],
-                      selectedAreas: [],
-                      timeWindowRange: 'all',
-                      minConfidence: 30,
-                      maxDistanceMiles: null,
-                      onlyFavorites: false,
-                    })
-                  }
+                  onClick={resetFilters}
                   className="text-amber-400 hover:underline font-bold text-xs"
                 >
                   Clear all filters
@@ -559,7 +606,7 @@ export default function App() {
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
             <h3 className="text-lg font-bold text-amber-300">All Yellowstone Geysers Repository</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {filteredItems.map(({ geyser, prediction }) => (
+              {catalogItems.map(({ geyser, prediction }) => (
                 <div
                   key={geyser.id}
                   onClick={() => setSelectedGeyserId(geyser.id)}

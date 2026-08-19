@@ -29,22 +29,30 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    if (!mapRef.current) {
-      // Default centered on Upper Geyser Basin / Old Faithful
-      const map = L.map(mapContainerRef.current, {
-        center: [44.4605, -110.8281],
-        zoom: 13,
-      });
+    const map = L.map(mapContainerRef.current, {
+      center: [44.4605, -110.8281],
+      zoom: 13,
+    });
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 18,
-      }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(map);
 
-      mapRef.current = map;
-    }
+    mapRef.current = map;
+    requestAnimationFrame(() => map.invalidateSize());
 
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      markersRef.current = {};
+      polylineRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const map = mapRef.current;
+    if (!map) return;
 
     // Clear previous markers
     Object.values(markersRef.current).forEach((m) => (m as L.Marker).remove());
@@ -83,7 +91,7 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
         color = '#eab308'; // yellow
       }
 
-      const iconHtml = `<div style="background-color: ${color}; width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid #ffffff; font-size: 10px; font-weight: bold; color: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.4); relative">
+      const iconHtml = `<div style="background-color: ${color}; width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid #ffffff; font-size: 10px; font-weight: bold; color: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.4); position: relative">
         <span class="${pulseClass}" style="position: absolute; inset: -3px; border-radius: 50%; background-color: ${color}; opacity: 0.4;"></span>
         ${geyser.name[0]}
       </div>`;
@@ -150,7 +158,7 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
         <div className="font-bold text-amber-400 mb-1">Geyser Forecast Legend</div>
         <div className="flex items-center space-x-2">
           <span className="w-3 h-3 rounded-full bg-red-500 inline-block"></span>
-          <span>Erupting / &lt;15m</span>
+          <span>Erupting now / overdue</span>
         </div>
         <div className="flex items-center space-x-2">
           <span className="w-3 h-3 rounded-full bg-orange-500 inline-block"></span>

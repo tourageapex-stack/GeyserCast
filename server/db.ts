@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
-import { Geyser, Eruption, Prediction, RouteInfo, SyncStatus, BacktestResult } from './types';
+import { Geyser, Eruption, Prediction, OfficialPrediction } from './types';
 
 // Ensure data directory exists
 const dbDir = path.resolve(process.cwd(), 'data');
@@ -112,6 +112,21 @@ export function initDb() {
       value TEXT NOT NULL,
       updatedAt TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS official_predictions (
+      geyserId TEXT PRIMARY KEY,
+      predictedTime TEXT NOT NULL,
+      windowStart TEXT NOT NULL,
+      windowEnd TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      probability REAL,
+      method TEXT,
+      comment TEXT,
+      sourceUser TEXT,
+      lastReportTime TEXT,
+      fetchedAt TEXT NOT NULL,
+      FOREIGN KEY(geyserId) REFERENCES geysers(id)
+    );
   `);
 }
 
@@ -138,6 +153,7 @@ export function upsertGeyser(geyser: Geyser) {
     INSERT INTO geysers (id, geysertimesId, name, normalizedName, alternateNames, basin, area, latitude, longitude, metadata, lastUpdated)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
+      geysertimesId = excluded.geysertimesId,
       name = excluded.name,
       normalizedName = excluded.normalizedName,
       alternateNames = excluded.alternateNames,
@@ -371,4 +387,79 @@ export function getSyncMeta(key: string): string | null {
   const stmt = db.prepare(`SELECT value FROM sync_meta WHERE key = ?`);
   const r: any = stmt.get(key);
   return r ? r.value : null;
+}
+
+export function getGeyserCount(): number {
+  const stmt = db.prepare(`SELECT COUNT(*) as cnt FROM geysers`);
+  const r: any = stmt.get();
+  return r ? Number(r.cnt) : 0;
+}
+
+export function remapGeysertimesIds(seeds: { id: string; geysertimesId: number }[]) {
+  const assign = db.prepare(`UPDATE geysers SET geysertimesId = ? WHERE id = ?`);
+  db.exec('BEGIN');
+  try {
+    seeds.forEach((seed, index) => assign.run(-(index + 1000), seed.id));
+    seeds.forEach((seed) => assign.run(seed.geysertimesId, seed.id));
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function deleteSyntheticEruptions() {
+  db.exec(`DELETE FROM eruptions WHERE id LIKE '%-hist-%' OR comment = 'Historical GeyserTimes observation record'`);
+}
+
+export function upsertOfficialPrediction(p: OfficialPrediction) {
+  const stmt = db.prepare(`
+    INSERT INTO official_predictions (
+      geyserId, predictedTime, windowStart, windowEnd, confidence, probability,
+      method, comment, sourceUser, lastReportTime, fetchedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(geyserId) DO UPDATE SET
+      predictedTime = excluded.predictedTime,
+      windowStart = excluded.windowStart,
+      windowEnd = excluded.windowEnd,
+      confidence = excluded.confidence,
+      probability = excluded.probability,
+      method = excluded.method,
+      comment = excluded.comment,
+      sourceUser = excluded.sourceUser,
+      lastReportTime = excluded.lastReportTime,
+      fetchedAt = excluded.fetchedAt
+  `);
+  stmt.run(
+    p.geyserId,
+    p.predictedTime,
+    p.windowStart,
+    p.windowEnd,
+    p.confidence,
+    p.probability ?? null,
+    p.method,
+    p.comment,
+    p.sourceUser,
+    p.lastReportTime ?? null,
+    p.fetchedAt
+  );
+}
+
+export function getOfficialPrediction(geyserId: string): OfficialPrediction | null {
+  const stmt = db.prepare(`SELECT * FROM official_predictions WHERE geyserId = ?`);
+  const r: any = stmt.get(geyserId);
+  if (!r) return null;
+  return {
+    geyserId: r.geyserId,
+    predictedTime: r.predictedTime,
+    windowStart: r.windowStart,
+    windowEnd: r.windowEnd,
+    confidence: Number(r.confidence),
+    probability: r.probability != null ? Number(r.probability) : undefined,
+    method: r.method || '',
+    comment: r.comment || '',
+    sourceUser: r.sourceUser || '',
+    lastReportTime: r.lastReportTime || undefined,
+    fetchedAt: r.fetchedAt,
+  };
 }

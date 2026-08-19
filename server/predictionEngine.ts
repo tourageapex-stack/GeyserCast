@@ -1,5 +1,5 @@
-import { Geyser, Eruption, Prediction, BacktestResult, PredictionFeatureBreakdown } from './types';
-import { getEruptionsForGeyser, getLastEruptionForGeyser, savePrediction } from './db';
+import { Geyser, Eruption, Prediction, BacktestResult } from './types';
+import { getEruptionsForGeyser, getLastEruptionForGeyser, getOfficialPrediction } from './db';
 
 // Model Names
 export type ModelType =
@@ -103,15 +103,14 @@ function predictRecentTrend(intervals: number[]): number {
  * For Old Faithful: short duration (<3 min) -> ~68m; long duration (>3.8 min) -> ~92m.
  */
 function predictDurationBimodal(lastEruption: Eruption, intervals: number[]): number {
-  const dur = lastEruption.duration ?? 4.0;
-  if (lastEruption.geyserId === 'old-faithful' || dur > 0) {
-    if (dur <= 3.0) {
-      return 68 + (dur - 2.5) * 4;
-    } else {
-      return 92 + (dur - 4.2) * 5;
-    }
+  if (lastEruption.geyserId !== 'old-faithful') {
+    return predictEWMA(intervals);
   }
-  return predictEWMA(intervals);
+  const dur = lastEruption.duration ?? 4.0;
+  if (dur <= 3.0) {
+    return 68 + (dur - 2.5) * 4;
+  }
+  return 92 + (dur - 4.2) * 5;
 }
 
 /**
@@ -200,14 +199,94 @@ export function runBacktestForGeyser(geyser: Geyser, eruptions: Eruption[], mode
   };
 }
 
-const GEYSERTIMES_PREDICTION_WINDOW_GEYSERS = new Set([
-  'old-faithful',
-  'daisy',
-  'castle',
-  'grand',
-  'riverside',
-  'great-fountain',
-]);
+const MODEL_CACHE_MS = 60 * 60 * 1000;
+const modelSelectionCache = new Map<string, { model: ModelType; mae: number; at: number }>();
+
+export function clearModelSelectionCache() {
+  modelSelectionCache.clear();
+}
+
+function selectStatisticalModel(geyser: Geyser, eruptions: Eruption[], intervals: number[], fallbackInterval: number): { model: ModelType; mae: number } {
+  const cached = modelSelectionCache.get(geyser.id);
+  if (cached && Date.now() - cached.at < MODEL_CACHE_MS) {
+    return { model: cached.model, mae: cached.mae };
+  }
+
+  let bestModel: ModelType = geyser.id === 'old-faithful' ? 'Duration Bimodal ML' : 'EWMA';
+  let bestMae = geyser.id === 'old-faithful' ? 6.2 : Math.max(8, fallbackInterval * 0.12);
+
+  if (geyser.id !== 'old-faithful' && intervals.length >= 10) {
+    const candidates: ModelType[] = ['EWMA', 'Rolling Median', 'Rolling Mean', 'Recent Trend', 'Median Interval', 'Mean Interval'];
+    bestMae = Infinity;
+    for (const model of candidates) {
+      const bt = runBacktestForGeyser(geyser, eruptions, model);
+      if (bt.evaluationsCount > 0 && bt.maeMinutes < bestMae) {
+        bestMae = bt.maeMinutes;
+        bestModel = model;
+      }
+    }
+    if (!Number.isFinite(bestMae)) {
+      bestModel = 'Median Interval';
+      bestMae = Math.max(5, fallbackInterval * 0.1);
+    }
+  } else if (intervals.length < 10 && geyser.id !== 'old-faithful') {
+    bestModel = 'Median Interval';
+    bestMae = Math.max(5, fallbackInterval * 0.1);
+  }
+
+  modelSelectionCache.set(geyser.id, { model: bestModel, mae: bestMae, at: Date.now() });
+  return { model: bestModel, mae: bestMae };
+}
+
+function applyModel(model: ModelType, lastEruption: Eruption, intervals: number[]): number {
+  switch (model) {
+    case 'Duration Bimodal ML':
+      return predictDurationBimodal(lastEruption, intervals);
+    case 'EWMA':
+      return predictEWMA(intervals);
+    case 'Rolling Median':
+      return predictRollingMedian(intervals);
+    case 'Rolling Mean':
+      return predictRollingMean(intervals);
+    case 'Recent Trend':
+      return predictRecentTrend(intervals);
+    case 'Median Interval':
+      return predictMedianInterval(intervals);
+    case 'Mean Interval':
+      return predictMeanInterval(intervals);
+    default:
+      return predictEWMA(intervals);
+  }
+}
+
+function canAdvanceMissedCycles(geyser: Geyser, predictedInterval: number): boolean {
+  const typical = Number(geyser.metadata?.typicalIntervalMinutes) || predictedInterval;
+  const predictability = String(geyser.metadata?.predictability || '');
+  return typical > 0 && typical <= 180 && /high/i.test(predictability);
+}
+
+function buildFeatures(
+  lastEruption: Eruption | null,
+  now: Date,
+  histMedian: number,
+  histMean: number,
+  predictedInterval: number,
+  obsCount: number,
+  uncertaintyMin: number
+) {
+  const lastTimeMs = lastEruption ? new Date(lastEruption.eruptionTime).getTime() : now.getTime();
+  const currentIntervalMin = Math.round(((now.getTime() - lastTimeMs) / (60 * 1000)) * 10) / 10;
+  return {
+    currentIntervalMinutes: lastEruption ? currentIntervalMin : 0,
+    historicalMedianMinutes: Math.round(histMedian * 10) / 10,
+    historicalMeanMinutes: Math.round(histMean * 10) / 10,
+    recentIntervalTrend: predictedInterval > histMedian ? 'Lengthening' : 'Shortening/Stable',
+    usableObservationsCount: obsCount,
+    modelUncertaintyMinutes: uncertaintyMin,
+    durationEffect: lastEruption?.duration ? `Last duration ${lastEruption.duration}m` : undefined,
+    observationQualityScore: lastEruption?.exact ? 1.0 : 0.7,
+  };
+}
 
 /**
  * Generate Prediction for a Geyser
@@ -219,6 +298,47 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
   const fallbackInterval = geyser.metadata?.typicalIntervalMinutes || 94;
   const now = new Date();
 
+  const intervalData = calculateEruptionIntervals(erups);
+  const intervals = intervalData.map((x) => x.intervalMinutes);
+  const histMedian = median(intervals) || fallbackInterval;
+  const histMean = mean(intervals) || fallbackInterval;
+
+  if (!useAi) {
+    const official = getOfficialPrediction(geyser.id);
+    if (official) {
+      const predictedMs = new Date(official.predictedTime).getTime();
+      if (!Number.isNaN(predictedMs) && predictedMs > now.getTime() - 20 * 60 * 1000) {
+        const windowStartMs = new Date(official.windowStart).getTime();
+        const windowEndMs = new Date(official.windowEnd).getTime();
+        const uncertaintyMin = Math.max(
+          5,
+          Math.round(((windowEndMs - windowStartMs) / 2 / (60 * 1000)) * 10) / 10
+        );
+        return {
+          id: `pred-${geyser.id}-official`,
+          geyserId: geyser.id,
+          createdAt: official.fetchedAt,
+          predictedTime: official.predictedTime,
+          windowStart: official.windowStart,
+          windowEnd: official.windowEnd,
+          confidence: official.confidence,
+          probability: official.probability,
+          modelName: 'GeyserTimes.org',
+          modelVersion: official.method || 'GeyserTimes Official',
+          features: buildFeatures(
+            lastEruption,
+            now,
+            histMedian,
+            histMean,
+            fallbackInterval,
+            erups.length,
+            uncertaintyMin
+          ),
+        };
+      }
+    }
+  }
+
   if (!lastEruption) {
     const predictedMs = now.getTime() + fallbackInterval * 60 * 1000;
     return {
@@ -228,102 +348,32 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
       predictedTime: new Date(predictedMs).toISOString(),
       windowStart: new Date(predictedMs - 15 * 60 * 1000).toISOString(),
       windowEnd: new Date(predictedMs + 15 * 60 * 1000).toISOString(),
-      confidence: 60,
-      modelName: useAi ? 'AI Prediction Model' : 'GeyserTimes.org',
-      modelVersion: useAi ? 'v2.0 (AI Multi-Model)' : 'GeyserTimes Official',
-      features: {
-        currentIntervalMinutes: 0,
-        historicalMedianMinutes: fallbackInterval,
-        historicalMeanMinutes: fallbackInterval,
-        recentIntervalTrend: 'Stable',
-        usableObservationsCount: 0,
-        modelUncertaintyMinutes: 15,
-        observationQualityScore: 0.8,
-      },
+      confidence: 45,
+      modelName: useAi ? 'Statistical Estimate' : 'Interval Estimate',
+      modelVersion: useAi ? 'v2.1 (local models)' : 'Typical interval fallback',
+      features: buildFeatures(null, now, fallbackInterval, fallbackInterval, fallbackInterval, 0, 15),
     };
   }
 
-  const intervalData = calculateEruptionIntervals(erups);
-  const intervals = intervalData.map((x) => x.intervalMinutes);
-  const histMedian = median(intervals) || fallbackInterval;
-  const histMean = mean(intervals) || fallbackInterval;
-
   let predictedInterval = fallbackInterval;
-  let modelName = 'GeyserTimes.org';
-  let modelVersion = 'GeyserTimes Official';
+  let modelName = 'Interval Estimate';
+  let modelVersion = 'Median of GeyserTimes records';
   let uncertaintyMin = 15;
 
   if (useAi) {
-    // AI Mode Enabled: compare candidate ML/statistical models
-    const candidateModels: ModelType[] = [
-      'Duration Bimodal ML',
-      'EWMA',
-      'Rolling Median',
-      'Rolling Mean',
-      'Recent Trend',
-      'Median Interval',
-      'Mean Interval',
-    ];
-
-    let bestModel: ModelType = 'EWMA';
-    let bestMae = Infinity;
-
-    if (geyser.id === 'old-faithful') {
-      bestModel = 'Duration Bimodal ML';
-      bestMae = 6.2;
-    } else if (intervals.length >= 10) {
-      for (const m of candidateModels) {
-        if (m === 'Duration Bimodal ML' && geyser.id !== 'old-faithful') continue;
-        const bt = runBacktestForGeyser(geyser, erups, m);
-        if (bt.maeMinutes < bestMae) {
-          bestMae = bt.maeMinutes;
-          bestModel = m;
-        }
-      }
-    } else {
-      bestModel = 'Median Interval';
-      bestMae = Math.max(5, fallbackInterval * 0.1);
-    }
-
-    switch (bestModel) {
-      case 'Duration Bimodal ML':
-        predictedInterval = predictDurationBimodal(lastEruption, intervals);
-        break;
-      case 'EWMA':
-        predictedInterval = predictEWMA(intervals);
-        break;
-      case 'Rolling Median':
-        predictedInterval = predictRollingMedian(intervals);
-        break;
-      case 'Rolling Mean':
-        predictedInterval = predictRollingMean(intervals);
-        break;
-      case 'Recent Trend':
-        predictedInterval = predictRecentTrend(intervals);
-        break;
-      case 'Median Interval':
-        predictedInterval = predictMedianInterval(intervals);
-        break;
-      case 'Mean Interval':
-        predictedInterval = predictMeanInterval(intervals);
-        break;
-    }
-
-    modelName = `AI Model (${bestModel})`;
-    modelVersion = 'v2.0 (AI Multi-Model)';
-    uncertaintyMin = Math.max(4, Math.round(bestMae * 1.2 * 10) / 10);
+    const selected = selectStatisticalModel(geyser, erups, intervals, fallbackInterval);
+    predictedInterval = applyModel(selected.model, lastEruption, intervals);
+    modelName = `Statistical Model (${selected.model})`;
+    modelVersion = 'v2.1 (cached local models)';
+    uncertaintyMin = Math.max(4, Math.round(selected.mae * 1.2 * 10) / 10);
+  } else if (geyser.id === 'old-faithful' && lastEruption.duration) {
+    predictedInterval = lastEruption.duration <= 3.0 ? 68 : 94;
+    uncertaintyMin = 10;
+    modelName = 'Interval Estimate';
+    modelVersion = 'Old Faithful duration-interval rule';
   } else {
-    // Strict GeyserTimes.org Official Mode
-    // Use official GeyserTimes interval algorithm (last duration effect for Old Faithful or median interval of GeyserTimes records)
-    if (geyser.id === 'old-faithful' && lastEruption.duration) {
-      predictedInterval = lastEruption.duration <= 3.0 ? 68 : 94;
-      uncertaintyMin = 10;
-    } else {
-      predictedInterval = histMedian || fallbackInterval;
-      uncertaintyMin = Math.max(8, Math.round(stdDev(intervals, histMedian) * 10) / 10);
-    }
-    modelName = 'GeyserTimes.org';
-    modelVersion = 'GeyserTimes Official';
+    predictedInterval = histMedian || fallbackInterval;
+    uncertaintyMin = Math.max(8, Math.round(stdDev(intervals, histMedian) * 10) / 10);
   }
 
   if (isNaN(predictedInterval) || predictedInterval <= 0) {
@@ -333,18 +383,17 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
   const lastTimeMs = new Date(lastEruption.eruptionTime).getTime();
   let predictedMs = lastTimeMs + predictedInterval * 60 * 1000;
 
-  // If the initially calculated eruption window is significantly in the past (overdue by > 30 minutes),
-  // advance forward by integer multiples of predictedInterval until we reach the next upcoming eruption window.
   const overdueThresholdMs = 30 * 60 * 1000;
-  if (predictedMs < now.getTime() - overdueThresholdMs && predictedInterval > 0) {
-    const elapsedSincePredicted = now.getTime() - predictedMs;
-    const intervalMs = predictedInterval * 60 * 1000;
-    const missedCycles = Math.ceil(elapsedSincePredicted / intervalMs);
-    predictedMs += missedCycles * intervalMs;
+  if (predictedMs < now.getTime() - overdueThresholdMs && predictedInterval > 0 && canAdvanceMissedCycles(geyser, predictedInterval)) {
+    const lastAgeMs = now.getTime() - lastTimeMs;
+    const maxStaleMs = Math.min(24 * 3600 * 1000, Math.max(6 * 3600 * 1000, predictedInterval * 3 * 60 * 1000));
+    if (lastAgeMs <= maxStaleMs) {
+      const elapsedSincePredicted = now.getTime() - predictedMs;
+      const intervalMs = predictedInterval * 60 * 1000;
+      const missedCycles = Math.ceil(elapsedSincePredicted / intervalMs);
+      predictedMs += missedCycles * intervalMs;
+    }
   }
-
-  const currentElapsedMs = now.getTime() - lastTimeMs;
-  const currentIntervalMin = Math.round((currentElapsedMs / (60 * 1000)) * 10) / 10;
 
   const windowStartMs = predictedMs - uncertaintyMin * 60 * 1000;
   const windowEndMs = predictedMs + uncertaintyMin * 60 * 1000;
@@ -354,11 +403,12 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
   if (obsCount < 10) baseConfidence -= 15;
   if (lastEruption.approximate) baseConfidence -= 10;
   if (lastEruption.questionable) baseConfidence -= 25;
+  if (predictedMs < now.getTime() - overdueThresholdMs) baseConfidence -= 20;
 
   const confidence = Math.min(98, Math.max(30, Math.round(baseConfidence)));
 
-  const prediction: Prediction = {
-    id: `pred-${geyser.id}-${Date.now()}`,
+  return {
+    id: `pred-${geyser.id}-${Math.round(predictedMs / 60000)}`,
     geyserId: geyser.id,
     createdAt: now.toISOString(),
     predictedTime: new Date(predictedMs).toISOString(),
@@ -368,18 +418,6 @@ export function generatePredictionForGeyser(geyser: Geyser, eruptions?: Eruption
     probability: Math.round(confidence * 0.95) / 100,
     modelName,
     modelVersion,
-    features: {
-      currentIntervalMinutes: currentIntervalMin,
-      historicalMedianMinutes: Math.round(histMedian * 10) / 10,
-      historicalMeanMinutes: Math.round(histMean * 10) / 10,
-      recentIntervalTrend: predictedInterval > histMedian ? 'Lengthening' : 'Shortening/Stable',
-      usableObservationsCount: obsCount,
-      modelUncertaintyMinutes: uncertaintyMin,
-      durationEffect: lastEruption.duration ? `Last duration ${lastEruption.duration}m` : undefined,
-      observationQualityScore: lastEruption.exact ? 1.0 : 0.7,
-    },
+    features: buildFeatures(lastEruption, now, histMedian, histMean, predictedInterval, obsCount, uncertaintyMin),
   };
-
-  savePrediction(prediction);
-  return prediction;
 }

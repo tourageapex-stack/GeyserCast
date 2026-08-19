@@ -1,7 +1,30 @@
-import { Geyser, Eruption, SyncStatus } from './types';
-import { upsertGeyser, upsertEruption, deleteEruptionsForGeyser, getAllGeysers, setSyncMeta, getSyncMeta, getTotalEruptionCount } from './db';
+import { Geyser, SyncStatus } from './types';
+import {
+  upsertGeyser,
+  upsertEruption,
+  getAllGeysers,
+  getGeyserById,
+  setSyncMeta,
+  getSyncMeta,
+  getTotalEruptionCount,
+  remapGeysertimesIds,
+  deleteSyntheticEruptions,
+  upsertOfficialPrediction,
+} from './db';
+import {
+  GeyserTimesEntry,
+  GeyserTimesPrediction,
+  parseGtDate,
+  parseDurationMinutes,
+  isGtFlagOn,
+  pickOfficialPrediction,
+  officialConfidence,
+} from './geysertimesParse';
 
-const GEYSERTIMES_API_BASE = 'https://geysertimes.org/api/v2';
+const GEYSERTIMES_API_BASE = 'https://www.geysertimes.org/api/v5';
+const GT_USER_AGENT = 'GeyserCast/1.0 (https://github.com/tourageapex-stack/GeyserCast; geyser data viewer)';
+const HISTORY_WINDOW_DAYS = 10;
+const HISTORY_RESYNC_MS = 6 * 60 * 60 * 1000;
 
 // Standard Geysers Dataset with accurate Yellowstone locations, rich details & photos
 const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
@@ -13,8 +36,8 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
     alternateNames: ['Old Faithful Geyser'],
     basin: 'Upper Geyser Basin',
     area: 'Old Faithful Area',
-    latitude: 44.4605,
-    longitude: -110.8281,
+    latitude: 44.460464,
+    longitude: -110.828155,
     metadata: {
       typicalIntervalMinutes: 94,
       durationMinutes: 4.5,
@@ -38,14 +61,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'steamboat',
-    geysertimesId: 1,
+    geysertimesId: 163,
     name: 'Steamboat Geyser',
     normalizedName: 'steamboat geyser',
     alternateNames: ['Steamboat'],
     basin: 'Norris Geyser Basin',
     area: 'Back Basin',
-    latitude: 44.7231,
-    longitude: -110.7028,
+    latitude: 44.7234895,
+    longitude: -110.7030023,
     metadata: {
       typicalIntervalMinutes: 10080,
       durationMinutes: 20,
@@ -69,14 +92,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'daisy',
-    geysertimesId: 3,
+    geysertimesId: 4,
     name: 'Daisy Geyser',
     normalizedName: 'daisy geyser',
     alternateNames: ['Daisy'],
     basin: 'Upper Geyser Basin',
     area: 'Daisy Group',
-    latitude: 44.4678,
-    longitude: -110.8383,
+    latitude: 44.4701878,
+    longitude: -110.8441868,
     metadata: {
       typicalIntervalMinutes: 140,
       durationMinutes: 3.5,
@@ -99,14 +122,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'castle',
-    geysertimesId: 4,
+    geysertimesId: 5,
     name: 'Castle Geyser',
     normalizedName: 'castle geyser',
     alternateNames: ['Castle'],
     basin: 'Upper Geyser Basin',
     area: 'Castle Group',
-    latitude: 44.4639,
-    longitude: -110.8361,
+    latitude: 44.463668,
+    longitude: -110.836486,
     metadata: {
       typicalIntervalMinutes: 840,
       durationMinutes: 20.0,
@@ -129,14 +152,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'grand',
-    geysertimesId: 5,
+    geysertimesId: 13,
     name: 'Grand Geyser',
     normalizedName: 'grand geyser',
     alternateNames: ['Grand'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4667,
-    longitude: -110.8356,
+    latitude: 44.4666627,
+    longitude: -110.8370021,
     metadata: {
       typicalIntervalMinutes: 390,
       durationMinutes: 12.0,
@@ -159,14 +182,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'riverside',
-    geysertimesId: 6,
+    geysertimesId: 7,
     name: 'Riverside Geyser',
     normalizedName: 'riverside geyser',
     alternateNames: ['Riverside'],
     basin: 'Upper Geyser Basin',
     area: 'Firehole River Area',
-    latitude: 44.4725,
-    longitude: -110.8389,
+    latitude: 44.47347,
+    longitude: -110.8409146,
     metadata: {
       typicalIntervalMinutes: 375,
       durationMinutes: 20.0,
@@ -189,14 +212,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'great-fountain',
-    geysertimesId: 7,
+    geysertimesId: 16,
     name: 'Great Fountain Geyser',
     normalizedName: 'great fountain geyser',
     alternateNames: ['Great Fountain'],
     basin: 'Lower Geyser Basin',
     area: 'Firehole Lake Drive',
-    latitude: 44.5367,
-    longitude: -110.8033,
+    latitude: 44.536574,
+    longitude: -110.8000526,
     metadata: {
       typicalIntervalMinutes: 660,
       durationMinutes: 45.0,
@@ -219,14 +242,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'beehive',
-    geysertimesId: 8,
+    geysertimesId: 1,
     name: 'Beehive Geyser',
     normalizedName: 'beehive geyser',
     alternateNames: ['Beehive'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4628,
-    longitude: -110.8322,
+    latitude: 44.4626134,
+    longitude: -110.8299965,
     metadata: {
       typicalIntervalMinutes: 960,
       durationMinutes: 5.0,
@@ -249,14 +272,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'lone-star',
-    geysertimesId: 9,
+    geysertimesId: 75,
     name: 'Lone Star Geyser',
     normalizedName: 'lone star geyser',
     alternateNames: ['Lone Star'],
     basin: 'Lone Star Basin',
     area: 'Firehole River South',
-    latitude: 44.4339,
-    longitude: -110.8128,
+    latitude: 44.4183661,
+    longitude: -110.8067246,
     metadata: {
       typicalIntervalMinutes: 180,
       durationMinutes: 30.0,
@@ -279,14 +302,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'echinus',
-    geysertimesId: 10,
+    geysertimesId: 81,
     name: 'Echinus Geyser',
     normalizedName: 'echinus geyser',
     alternateNames: ['Echinus'],
     basin: 'Norris Geyser Basin',
     area: 'Back Basin',
-    latitude: 44.7258,
-    longitude: -110.7042,
+    latitude: 44.722006,
+    longitude: -110.702055,
     metadata: {
       typicalIntervalMinutes: 540,
       durationMinutes: 4.0,
@@ -309,14 +332,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'plume',
-    geysertimesId: 11,
+    geysertimesId: 3,
     name: 'Plume Geyser',
     normalizedName: 'plume geyser',
     alternateNames: ['Plume'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4633,
-    longitude: -110.8333,
+    latitude: 44.4627299,
+    longitude: -110.8293979,
     metadata: {
       typicalIntervalMinutes: 85,
       durationMinutes: 3.0,
@@ -338,14 +361,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'grotto',
-    geysertimesId: 12,
+    geysertimesId: 21,
     name: 'Grotto Geyser',
     normalizedName: 'grotto geyser',
     alternateNames: ['Grotto'],
     basin: 'Upper Geyser Basin',
     area: 'Grotto Group',
-    latitude: 44.4711,
-    longitude: -110.8411,
+    latitude: 44.4718025,
+    longitude: -110.8417597,
     metadata: {
       typicalIntervalMinutes: 420,
       durationMinutes: 120.0,
@@ -367,14 +390,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'white-dome',
-    geysertimesId: 13,
+    geysertimesId: 65,
     name: 'White Dome Geyser',
     normalizedName: 'white dome geyser',
     alternateNames: ['White Dome'],
     basin: 'Lower Geyser Basin',
     area: 'Firehole Lake Drive',
-    latitude: 44.5383,
-    longitude: -110.8064,
+    latitude: 44.539318,
+    longitude: -110.8028189,
     metadata: {
       typicalIntervalMinutes: 30,
       durationMinutes: 2.0,
@@ -396,14 +419,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'jewel',
-    geysertimesId: 14,
+    geysertimesId: 66,
     name: 'Jewel Geyser',
     normalizedName: 'jewel geyser',
     alternateNames: ['Jewel'],
     basin: 'Upper Geyser Basin',
     area: 'Biscuit Basin',
-    latitude: 44.4856,
-    longitude: -110.8525,
+    latitude: 44.4849062,
+    longitude: -110.8561833,
     metadata: {
       typicalIntervalMinutes: 8.5,
       durationMinutes: 1.0,
@@ -424,7 +447,6 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
     },
   },
 ];
-
 let globalSyncStatus: SyncStatus = {
   lastSyncAt: getSyncMeta('lastSyncAt'),
   status: 'idle',
@@ -441,191 +463,135 @@ export function getGlobalSyncStatus(): SyncStatus {
   return globalSyncStatus;
 }
 
-function getCastleAnchorLastEruption(): Date {
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' };
-  const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
-  const year = parts.find((p) => p.type === 'year')?.value || '2026';
-  const month = parts.find((p) => p.type === 'month')?.value || '08';
-  const day = parts.find((p) => p.type === 'day')?.value || '08';
-
-  // Construct Today at 09:28:00 Mountain Time (MDT = UTC-6 in August)
-  const today928Ms = Date.parse(`${year}-${month}-${day}T09:28:00-06:00`);
-  return new Date(isNaN(today928Ms) ? now.getTime() - 2 * 3600 * 1000 : today928Ms);
+function featuredGeyserTimesIds(): number[] {
+  return SEED_GEYSERS.map((g) => g.geysertimesId);
 }
 
-function getBeehiveAnchorLastEruption(): Date {
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' };
-  const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
-  const year = parts.find((p) => p.type === 'year')?.value || '2026';
-  const month = parts.find((p) => p.type === 'month')?.value || '08';
-  const day = parts.find((p) => p.type === 'day')?.value || '08';
-
-  // Beehive erupted earlier today at 09:00:00 Mountain Time
-  const todayMs = Date.parse(`${year}-${month}-${day}T09:00:00-06:00`);
-  return new Date(isNaN(todayMs) ? now.getTime() - 5 * 3600 * 1000 : todayMs);
-}
-
-/**
- * Generates initial rich historical eruption records for major geysers
- * simulating genuine GeyserTimes historical archives going back several weeks.
- */
-function generateHistoricalEruptionSeed(geyserId: string, intervalMin: number, stdDevMin: number, typicalDuration: number): Eruption[] {
-  const eruptions: Eruption[] = [];
-  const now = new Date();
-
-  let anchorLastMs: number;
-  if (geyserId === 'castle') {
-    anchorLastMs = getCastleAnchorLastEruption().getTime();
-  } else if (geyserId === 'beehive') {
-    anchorLastMs = getBeehiveAnchorLastEruption().getTime();
-  } else if (geyserId === 'old-faithful') {
-    anchorLastMs = now.getTime() - 45 * 60 * 1000;
-  } else if (geyserId === 'daisy') {
-    anchorLastMs = now.getTime() - 60 * 60 * 1000;
-  } else if (geyserId === 'grand') {
-    anchorLastMs = now.getTime() - 120 * 60 * 1000;
-  } else if (geyserId === 'riverside') {
-    anchorLastMs = now.getTime() - 180 * 60 * 1000;
-  } else if (geyserId === 'great-fountain') {
-    anchorLastMs = now.getTime() - 240 * 60 * 1000;
-  } else {
-    anchorLastMs = now.getTime() - Math.floor(intervalMin * 0.4) * 60 * 1000;
+async function fetchGtJson<T>(path: string, timeoutMs = 12000): Promise<T> {
+  const res = await fetch(`${GEYSERTIMES_API_BASE}${path}`, {
+    headers: { 'User-Agent': GT_USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new Error(`GeyserTimes ${path} failed with HTTP ${res.status}`);
   }
+  return (await res.json()) as T;
+}
 
-  // Generate historical records stepping backward for 30 days
-  const minTimeMs = now.getTime() - 30 * 24 * 3600 * 1000;
-  let currentMs = anchorLastMs;
-  let count = 0;
+function ingestEntry(entry: GeyserTimesEntry): boolean {
+  const gtId = Number(entry.geyserID);
+  if (!Number.isFinite(gtId)) return false;
+  const geyser = getGeyserById(String(gtId));
+  if (!geyser) return false;
 
-  while (currentMs >= minTimeMs) {
-    count++;
-    let dur = typicalDuration;
-    let interval = intervalMin;
+  const eruptionTime = parseGtDate(entry.time);
+  if (!eruptionTime) return false;
 
-    if (geyserId === 'old-faithful') {
-      const isLong = Math.random() > 0.35;
-      dur = isLong ? 4.2 + (Math.random() - 0.5) * 0.4 : 2.5 + (Math.random() - 0.5) * 0.4;
-      interval = isLong ? 92 + (Math.random() - 0.5) * 12 : 68 + (Math.random() - 0.5) * 10;
-    } else {
-      interval = intervalMin + (Math.random() - 0.5) * stdDevMin * 2;
-    }
+  const eruptionId = entry.eruptionID ? `gt-${entry.eruptionID}` : `gt-${geyser.id}-${entry.time}`;
+  const flags = entry as unknown as Record<string, unknown>;
 
-    const eruptionTime = new Date(currentMs).toISOString();
-    eruptions.push({
-      id: `${geyserId}-hist-${count}-${currentMs}`,
-      geyserId,
-      eruptionTime,
-      duration: Math.round(dur * 10) / 10,
-      exact: true,
-      approximate: false,
-      electronic: count % 3 === 0,
-      webcam: count % 2 === 0,
-      questionable: false,
-      major: true,
-      minor: false,
-      comment: 'Historical GeyserTimes observation record',
-      importedAt: new Date().toISOString(),
+  upsertEruption({
+    id: eruptionId,
+    geysertimesId: entry.eruptionID ? Number(entry.eruptionID) : undefined,
+    geyserId: geyser.id,
+    eruptionTime,
+    duration: parseDurationMinutes(entry),
+    exact: isGtFlagOn(flags, 'exact'),
+    approximate: isGtFlagOn(flags, 'A', 'a'),
+    electronic: isGtFlagOn(flags, 'E', 'e'),
+    webcam: isGtFlagOn(flags, 'wc'),
+    questionable: isGtFlagOn(flags, 'q'),
+    major: isGtFlagOn(flags, 'maj'),
+    minor: isGtFlagOn(flags, 'min'),
+    initial: isGtFlagOn(flags, 'ini'),
+    comment: entry.comment || '',
+    sourceUpdatedAt: parseGtDate(entry.timeUpdated) || undefined,
+    importedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+function ingestOfficialPredictions(predictions: GeyserTimesPrediction[]) {
+  const fetchedAt = new Date().toISOString();
+  for (const seed of SEED_GEYSERS) {
+    const picked = pickOfficialPrediction(predictions, seed.geysertimesId);
+    if (!picked) continue;
+    const predictedTime = parseGtDate(picked.prediction);
+    if (!predictedTime) continue;
+    const windowStart = parseGtDate(picked.windowOpen) || predictedTime;
+    const windowEnd = parseGtDate(picked.windowClose) || predictedTime;
+    upsertOfficialPrediction({
+      geyserId: seed.id,
+      predictedTime,
+      windowStart,
+      windowEnd,
+      confidence: officialConfidence(picked),
+      probability: Number(picked.probability) || undefined,
+      method: picked.method || 'GeyserTimes.org',
+      comment: picked.comment || '',
+      sourceUser: picked.userName || 'GeyserTimes',
+      lastReportTime: parseGtDate(picked.lastReportTime) || undefined,
+      fetchedAt,
     });
-
-    currentMs -= interval * 60 * 1000;
   }
+}
 
-  return eruptions;
+function shouldRefreshHistory(): boolean {
+  if (getTotalEruptionCount() < 20) return true;
+  const last = getSyncMeta('lastHistorySyncAt');
+  if (!last) return true;
+  const elapsed = Date.now() - new Date(last).getTime();
+  return Number.isNaN(elapsed) || elapsed > HISTORY_RESYNC_MS;
 }
 
 export async function initializeSeedDataIfNeeded() {
   const nowIso = new Date().toISOString();
-
-  console.log('[GeyserTimes] Seeding Yellowstone geysers and anchor eruption records...');
+  console.log('[GeyserTimes] Upserting featured Yellowstone geyser catalog...');
+  remapGeysertimesIds(SEED_GEYSERS.map((g) => ({ id: g.id, geysertimesId: g.geysertimesId })));
   for (const sg of SEED_GEYSERS) {
     upsertGeyser({ ...sg, lastUpdated: nowIso });
   }
-
-  for (const sg of SEED_GEYSERS) {
-    // Clear any previous ghost or stale records for seeded geysers to ensure precise anchor data
-    deleteEruptionsForGeyser(sg.id);
-    const typicalInterval = sg.metadata?.typicalIntervalMinutes || 120;
-    const stdDev = Math.max(5, typicalInterval * 0.1);
-    const typicalDur = sg.metadata?.durationMinutes || 5.0;
-    const records = generateHistoricalEruptionSeed(sg.id, typicalInterval, stdDev, typicalDur);
-    for (const e of records) {
-      upsertEruption(e);
-    }
-  }
-
-  setSyncMeta('lastSyncAt', nowIso);
-  globalSyncStatus.lastSyncAt = nowIso;
 }
 
 /**
- * Incremental GeyserTimes API Sync process
+ * Live GeyserTimes.org API v5 sync: latest eruptions, recent history, official predictions.
  */
 export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   globalSyncStatus.status = 'syncing';
   let addedCount = 0;
 
   try {
-    // 1. Fetch live geysers list from GeyserTimes API
-    const res = await fetch(`${GEYSERTIMES_API_BASE}/getGeysers`, {
-      headers: { 'User-Agent': 'YellowstoneGeyserPredictor/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
+    const ids = featuredGeyserTimesIds().join(';');
 
-    if (res && res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        for (const item of data) {
-          const gId = item.id ? String(item.id) : item.name?.toLowerCase().replace(/\s+/g, '-');
-          if (!gId) continue;
-          upsertGeyser({
-            id: gId,
-            geysertimesId: Number(item.id) || 0,
-            name: item.name || 'Unknown Geyser',
-            normalizedName: (item.name || '').toLowerCase(),
-            alternateNames: item.alternate_names ? item.alternate_names.split(';') : [],
-            basin: item.basin || 'Yellowstone',
-            area: item.area || 'Park',
-            latitude: Number(item.latitude) || 44.4605,
-            longitude: Number(item.longitude) || -110.8281,
-            metadata: { description: item.description || '' },
-            lastUpdated: new Date().toISOString(),
-          });
-        }
-      }
+    const predPayload = await fetchGtJson<{ status?: string; predictions?: GeyserTimesPrediction[] }>(
+      `/predictions_latest?iso=1`
+    );
+    if (Array.isArray(predPayload.predictions)) {
+      ingestOfficialPredictions(predPayload.predictions);
     }
 
-    // 2. Fetch latest eruptions from GeyserTimes API
-    const erupRes = await fetch(`${GEYSERTIMES_API_BASE}/getLatestEruptions`, {
-      headers: { 'User-Agent': 'YellowstoneGeyserPredictor/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
+    const latestPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
+      `/entries_latest/${ids}?iso=1`
+    );
+    for (const entry of latestPayload.entries || []) {
+      if (ingestEntry(entry)) addedCount += 1;
+    }
 
-    if (erupRes && erupRes.ok) {
-      const erupData = await erupRes.json();
-      if (Array.isArray(erupData)) {
-        for (const item of erupData) {
-          const gId = item.geyserID ? String(item.geyserID) : 'old-faithful';
-          const eruptionTime = item.time ? new Date(item.time * 1000).toISOString() : new Date().toISOString();
-          const eId = `gt-${item.id || item.time}`;
-
-          upsertEruption({
-            id: eId,
-            geysertimesId: Number(item.id) || undefined,
-            geyserId: gId,
-            eruptionTime,
-            duration: item.duration ? Number(item.duration) / 60 : undefined,
-            exact: item.exact === '1' || item.exact === 1,
-            approximate: item.approximate === '1' || item.approximate === 1,
-            electronic: item.electronic === '1' || item.electronic === 1,
-            webcam: item.webcam === '1' || item.webcam === 1,
-            questionable: item.questionable === '1' || item.questionable === 1,
-            comment: item.comment || '',
-            importedAt: new Date().toISOString(),
-          });
-          addedCount++;
-        }
+    if (shouldRefreshHistory()) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const fromSec = nowSec - HISTORY_WINDOW_DAYS * 24 * 3600;
+      const historyPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
+        `/entries/${fromSec}/${nowSec}/${ids}?iso=1&primary=1`,
+        20000
+      );
+      let historyCount = 0;
+      for (const entry of historyPayload.entries || []) {
+        if (ingestEntry(entry)) historyCount += 1;
+      }
+      if (historyCount > 0) {
+        deleteSyntheticEruptions();
+        setSyncMeta('lastHistorySyncAt', new Date().toISOString());
+        addedCount += historyCount;
       }
     }
 
@@ -638,7 +604,8 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   } catch (err: any) {
     console.warn('[GeyserTimes Sync Warning]', err?.message || err);
     globalSyncStatus.status = 'error';
-    globalSyncStatus.lastErrorMessage = err?.message || 'GeyserTimes connection timeout. Utilizing local cached repository.';
+    globalSyncStatus.lastErrorMessage =
+      err?.message || 'GeyserTimes connection timeout. Using last local cache.';
   }
 
   return getGlobalSyncStatus();

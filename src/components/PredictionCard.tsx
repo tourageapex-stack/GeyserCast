@@ -188,7 +188,7 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
       <div className="flex items-center justify-between text-xs text-stone-400 pt-1">
         <div className="flex items-center space-x-1">
           <Clock className="w-3.5 h-3.5" />
-          <span>Last eruption interval: ~{formatMinutesToHoursAndMinutes(Math.abs(prediction.features.currentIntervalMinutes))} ago</span>
+          <span>Last eruption: {formatMinutesToHoursAndMinutes(Math.abs(prediction.features.currentIntervalMinutes))} ago</span>
         </div>
 
         <button
