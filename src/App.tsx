@@ -207,7 +207,10 @@ export default function App() {
       }
 
       // 4. Time Window Filter
-      if (filters.timeWindowRange !== 'all') {
+      if (filters.timeWindowRange === 'all') {
+        // "All" still means a visitor-relevant horizon, not dormant 2013 records.
+        if (minutesUntilEruption < -360 || minutesUntilEruption > 36 * 60) return false;
+      } else {
         let maxMinutes = 1440;
         if (filters.timeWindowRange === '15m') maxMinutes = 15;
         else if (filters.timeWindowRange === '30m') maxMinutes = 30;
@@ -237,23 +240,19 @@ export default function App() {
 
     // Sort list based on selected criteria
     return list.sort((a, b) => {
+      const timeKey = (minutes: number) => (minutes >= -180 ? minutes : 1_000_000 - minutes);
       if (filters.sortBy === 'distance') {
-        // Primary: Closest distance first
         const distDiff = a.walkRoute.distanceMiles - b.walkRoute.distanceMiles;
         if (Math.abs(distDiff) > 0.01) {
           return distDiff;
         }
-        // Secondary: Earliest eruption time first
-        return a.minutesUntilEruption - b.minutesUntilEruption;
-      } else {
-        // Primary: Earliest eruption time first
-        const timeDiff = a.minutesUntilEruption - b.minutesUntilEruption;
-        if (timeDiff !== 0) {
-          return timeDiff;
-        }
-        // Secondary: Closest distance first
-        return a.walkRoute.distanceMiles - b.walkRoute.distanceMiles;
+        return timeKey(a.minutesUntilEruption) - timeKey(b.minutesUntilEruption);
       }
+      const timeDiff = timeKey(a.minutesUntilEruption) - timeKey(b.minutesUntilEruption);
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return a.walkRoute.distanceMiles - b.walkRoute.distanceMiles;
     });
   }, [items, filters, favorites]);
 

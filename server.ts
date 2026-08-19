@@ -95,8 +95,8 @@ async function startServer() {
       };
     });
 
-    // Sort by predicted time ascending
-    list.sort((a, b) => new Date(a.prediction.predictedTime).getTime() - new Date(b.prediction.predictedTime).getTime());
+    const timeKey = (minutes: number) => (minutes >= -180 ? minutes : 1_000_000 - minutes);
+    list.sort((a, b) => timeKey(a.minutesUntilEruption) - timeKey(b.minutesUntilEruption));
     res.json(list);
   });
 
