@@ -56,6 +56,14 @@ describe('Vercel fetch adapter', () => {
     const body = await res.json();
     assert.equal(body.ok, true);
   });
+
+  it('restores nested /api paths from the rewrite path query', async () => {
+    const { handleVercelRequest } = await import('./expressFetch');
+    const res = await handleVercelRequest(new Request('http://localhost/api?path=health'));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+  });
 });
 
 describe('restoreVercelApiUrl', () => {

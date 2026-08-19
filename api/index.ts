@@ -1,3 +1,5 @@
+import { handleVercelRequest } from '../server/expressFetch';
+
 export const config = {
   maxDuration: 30,
 };
@@ -16,23 +18,6 @@ function json(res: any, status: number, obj: unknown) {
   });
 }
 
-function requestPath(req: any): string {
-  try {
-    if (typeof Request !== 'undefined' && req instanceof Request) {
-      const url = new URL(req.url);
-      return `${url.pathname}${url.search}`;
-    }
-  } catch {
-    // ignore
-  }
-  const headers = req?.headers;
-  const forwarded =
-    (typeof headers?.get === 'function' ? headers.get('x-forwarded-uri') : headers?.['x-forwarded-uri']) ||
-    (typeof headers?.get === 'function' ? headers.get('x-invoke-path') : headers?.['x-invoke-path']);
-  if (typeof forwarded === 'string' && forwarded.length > 0) return forwarded;
-  return String(req?.url || '');
-}
-
 function nodeReqToRequest(req: any): Request {
   const host = req.headers?.host || 'localhost';
   const url = `https://${host}${req.url || '/'}`;
@@ -46,17 +31,6 @@ function nodeReqToRequest(req: any): Request {
 
 export default async function handler(req: any, res?: any) {
   try {
-    const path = requestPath(req);
-    if (path.includes('/health') || path === '/api' || path === '/api/') {
-      return json(res, 200, {
-        ok: true,
-        node: process.version,
-        mode: res ? 'node' : 'web',
-        path,
-      });
-    }
-
-    const { handleVercelRequest } = await import('../server/expressFetch');
     const request =
       typeof Request !== 'undefined' && req instanceof Request ? req : nodeReqToRequest(req);
     const response = await handleVercelRequest(request);
