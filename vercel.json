@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx vite build",
+  "buildCommand": "npx esbuild server/expressFetch.ts --bundle --platform=node --format=esm --outfile=api/server.bundle.js --packages=external && npx vite build",
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
