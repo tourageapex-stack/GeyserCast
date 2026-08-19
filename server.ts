@@ -1,10 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
-import { initDb, getAllGeysers, getGeyserById, getEruptionsForGeyser, getTotalEruptionCount, getSyncMeta } from './server/db';
+import { getAllGeysers, getGeyserById, getEruptionsForGeyser, getTotalEruptionCount } from './server/db';
 import { initializeSeedDataIfNeeded, syncWithGeyserTimes, getGlobalSyncStatus } from './server/geysertimes';
 import { handleGeyserPhotoProxy } from './server/imageProxy';
-import { generatePredictionForGeyser, runBacktestForGeyser } from './server/predictionEngine';
+import { generatePredictionForGeyser, runBacktestForGeyser, clearModelSelectionCache } from './server/predictionEngine';
 import { calculateRoute, evaluateCanIMakeIt } from './server/routing';
 import { queryGeyserAssistant, parseNaturalLanguageFilter } from './server/gemini';
 
@@ -12,11 +13,11 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
-  // Initialize DB and Seed Data
-  initDb();
+  // Catalog first, then a live GeyserTimes pull (does not block serving if the API is slow)
   await initializeSeedDataIfNeeded();
+  await syncWithGeyserTimes();
 
   // Background sync every 15 minutes
   setInterval(() => {
@@ -94,8 +95,8 @@ async function startServer() {
       };
     });
 
-    // Sort by predicted time ascending
-    list.sort((a, b) => new Date(a.prediction.predictedTime).getTime() - new Date(b.prediction.predictedTime).getTime());
+    const timeKey = (minutes: number) => (minutes >= -180 ? minutes : 1_000_000 - minutes);
+    list.sort((a, b) => timeKey(a.minutesUntilEruption) - timeKey(b.minutesUntilEruption));
     res.json(list);
   });
 
@@ -134,7 +135,7 @@ async function startServer() {
       geysersCount: geysers.length,
       totalEruptionsCount: totalEruptions,
       syncStatus,
-      modelVersion: 'v1.4',
+      modelVersion: 'v2.1',
     });
   });
 
@@ -154,30 +155,37 @@ async function startServer() {
   app.get('/api/itinerary', (req, res) => {
     const userLat = Number(req.query.userLat) || 44.4596;
     const userLon = Number(req.query.userLon) || -110.8281;
-    const availableMinutes = Number(req.query.minutes) || 120; // default 2 hours
+    const availableMinutes = Number(req.query.minutes) || 120;
     const buffer = Number(req.query.buffer) || 10;
+    const mode = req.query.mode === 'driving' ? 'driving' : 'walking';
+    const useAi = req.query.useAi === 'true';
 
     const geysers = getAllGeysers();
     const now = Date.now();
     const maxTime = now + availableMinutes * 60 * 1000;
 
-    // Filter candidates predicted within available time window
     const candidates = geysers
       .map((g) => {
-        const pred = generatePredictionForGeyser(g);
-        const route = calculateRoute(userLat, userLon, g.latitude, g.longitude, 'walking');
-        const canMakeIt = evaluateCanIMakeIt(pred.predictedTime, route.durationMinutes, buffer);
+        const pred = generatePredictionForGeyser(g, undefined, useAi);
+        const walkRoute = calculateRoute(userLat, userLon, g.latitude, g.longitude, 'walking');
+        const driveRoute = calculateRoute(userLat, userLon, g.latitude, g.longitude, 'driving');
+        const travel = mode === 'driving' ? driveRoute : walkRoute;
+        const canMakeIt = evaluateCanIMakeIt(pred.predictedTime, travel.durationMinutes, buffer);
         const predMs = new Date(pred.predictedTime).getTime();
+        const minutesUntilEruption = Math.round((predMs - now) / (60 * 1000));
         return {
           geyser: g,
           prediction: pred,
-          route,
+          minutesUntilEruption,
+          walkRoute,
+          driveRoute,
           canMakeIt,
           predMs,
         };
       })
       .filter((item) => item.predMs >= now && item.predMs <= maxTime && item.canMakeIt.status !== 'too_late')
-      .sort((a, b) => a.predMs - b.predMs);
+      .sort((a, b) => a.predMs - b.predMs)
+      .map(({ predMs, ...item }) => item);
 
     res.json({
       availableMinutes,
@@ -213,8 +221,12 @@ async function startServer() {
     res.json(status);
   });
 
-  // GET /api/admin/backtest
-  app.get('/api/admin/backtest', (req, res) => {
+  // POST /api/admin/retrain
+  app.post('/api/admin/retrain', (_req, res) => {
+    clearModelSelectionCache();
+    res.json({ ok: true, modelVersion: 'v2.1' });
+  });
+  app.get('/api/admin/backtest', (_req, res) => {
     const geysers = getAllGeysers();
     const results = geysers.map((g) => {
       const erups = getEruptionsForGeyser(g.id, 200);

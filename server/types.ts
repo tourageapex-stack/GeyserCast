@@ -92,3 +92,17 @@ export interface SyncStatus {
   recentAddedCount: number;
   lastErrorMessage: string | null;
 }
+
+export interface OfficialPrediction {
+  geyserId: string;
+  predictedTime: string;
+  windowStart: string;
+  windowEnd: string;
+  confidence: number;
+  probability?: number;
+  method: string;
+  comment: string;
+  sourceUser: string;
+  lastReportTime?: string;
+  fetchedAt: string;
+}

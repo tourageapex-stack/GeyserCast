@@ -58,7 +58,13 @@ export const GeyserDetailModal: React.FC<GeyserDetailModalProps> = ({ geyserId, 
   const hourCounts: { [hour: number]: number } = {};
   for (let i = 0; i < 24; i++) hourCounts[i] = 0;
   eruptions.forEach((e) => {
-    const hr = new Date(e.eruptionTime).getHours();
+    const hr = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Denver',
+        hour: 'numeric',
+        hourCycle: 'h23',
+      }).format(new Date(e.eruptionTime))
+    );
     hourCounts[hr] = (hourCounts[hr] || 0) + 1;
   });
 

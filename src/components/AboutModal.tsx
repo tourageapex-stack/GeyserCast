@@ -10,7 +10,7 @@ export const AboutModal: React.FC = () => {
             <Info className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-amber-300">About Yellowstone Geyser Predictor</h2>
+            <h2 className="text-2xl font-bold text-amber-300">About GeyserCast</h2>
             <p className="text-xs text-stone-400">
               Data Sources, Mathematical Prediction Methods, and Safety Guidelines
             </p>
@@ -24,17 +24,25 @@ export const AboutModal: React.FC = () => {
             <span>Primary Data Source & Attribution</span>
           </div>
           <p className="text-stone-300">
-            This application relies on primary geyser observation records and eruption archives provided by{' '}
+            This application contains information from{' '}
             <a
               href="https://geysertimes.org/"
               target="_blank"
               rel="noreferrer"
-              className="text-amber-400 hover:underline font-bold inline-flex items-center space-x-1"
+              className="text-amber-400 hover:underline font-bold"
             >
-              <span>GeyserTimes.org</span>
-              <ExternalLink className="w-3 h-3 inline" />
+              GeyserTimes
             </a>
-            . We credit and express deep gratitude to GeyserTimes.org and its community of dedicated observers, webcams, and electronic monitoring networks for documenting Yellowstone thermal activity.
+            , which is made available here under the{' '}
+            <a
+              href="https://opendatacommons.org/licenses/odbl/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-amber-400 hover:underline font-bold"
+            >
+              Open Database License (ODbL)
+            </a>
+            . We credit GeyserTimes.org and its community of observers, webcams, and electronic monitors.
           </p>
           <div className="pt-2 flex flex-wrap gap-3">
             <a
@@ -63,10 +71,13 @@ export const AboutModal: React.FC = () => {
             <span>Statistical & ML Prediction Engine</span>
           </div>
           <p className="text-stone-300">
-            Geyser eruption predictions are produced by server-side statistical models (Exponentially Weighted Moving Averages, Rolling Medians, Recent Trend Analysis, and Duration-Interval Correlation Regression) backtested chronologically against thousands of historical observations.
+            GeyserCast uses official GeyserTimes.org / NPS prediction windows when they exist. If a geyser has no live forecast, it falls back to an interval estimate from recent GeyserTimes eruption records (and, in Statistical mode, EWMA / Old Faithful duration rules). These are estimates, not guarantees.
           </p>
           <p className="text-stone-400">
             Gemini AI is used exclusively for natural-language filter translation and answering visitor questions using structured database records. Gemini never invents or guesses numerical eruption times.
+          </p>
+          <p className="text-stone-400">
+            Geyser photographs are the real Wikimedia Commons / Wikipedia article images for each feature, proxied by this app. Credits appear on the detail view.
           </p>
         </div>
 

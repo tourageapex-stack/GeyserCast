@@ -54,10 +54,10 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-amber-400">
-              Yellowstone Geyser Predictor
+              GeyserCast
             </h1>
             <p className="text-xs text-stone-400">
-              Live Forecasts & Travel Times • GeyserTimes.org Data Engine
+              Yellowstone forecasts from GeyserTimes.org • walking times from your location
             </p>
           </div>
         </div>
@@ -105,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-amber-600 text-stone-950 shadow'
                   : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800'
               }`}
-              title="Strictly use GeyserTimes.org official intervals and data"
+              title="Use official GeyserTimes.org / NPS prediction windows when available"
             >
               <span>GeyserTimes.org</span>
             </button>
@@ -116,10 +116,10 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-sky-500 text-stone-950 shadow'
                   : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800'
               }`}
-              title="Use AI multi-candidate Machine Learning predictions"
+              title="Use local statistical models (EWMA, duration rules) instead of official windows"
             >
               <Bot className="w-3 h-3" />
-              <span>AI Predictions</span>
+              <span>Statistical</span>
             </button>
           </div>
 

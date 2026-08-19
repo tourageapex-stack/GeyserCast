@@ -1,7 +1,30 @@
-import { Geyser, Eruption, SyncStatus } from './types';
-import { upsertGeyser, upsertEruption, deleteEruptionsForGeyser, getAllGeysers, setSyncMeta, getSyncMeta, getTotalEruptionCount } from './db';
+import { Geyser, SyncStatus } from './types';
+import {
+  upsertGeyser,
+  upsertEruption,
+  getAllGeysers,
+  getGeyserById,
+  setSyncMeta,
+  getSyncMeta,
+  getTotalEruptionCount,
+  remapGeysertimesIds,
+  deleteSyntheticEruptions,
+  upsertOfficialPrediction,
+} from './db';
+import {
+  GeyserTimesEntry,
+  GeyserTimesPrediction,
+  parseGtDate,
+  parseDurationMinutes,
+  isGtFlagOn,
+  pickOfficialPrediction,
+  officialConfidence,
+} from './geysertimesParse';
 
-const GEYSERTIMES_API_BASE = 'https://geysertimes.org/api/v2';
+const GEYSERTIMES_API_BASE = 'https://www.geysertimes.org/api/v5';
+const GT_USER_AGENT = 'GeyserCast/1.0 (https://github.com/tourageapex-stack/GeyserCast; geyser data viewer)';
+const HISTORY_WINDOW_DAYS = 10;
+const HISTORY_RESYNC_MS = 6 * 60 * 60 * 1000;
 
 // Standard Geysers Dataset with accurate Yellowstone locations, rich details & photos
 const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
@@ -13,8 +36,8 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
     alternateNames: ['Old Faithful Geyser'],
     basin: 'Upper Geyser Basin',
     area: 'Old Faithful Area',
-    latitude: 44.4605,
-    longitude: -110.8281,
+    latitude: 44.460464,
+    longitude: -110.828155,
     metadata: {
       typicalIntervalMinutes: 94,
       durationMinutes: 4.5,
@@ -23,9 +46,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '204°F (95.5°C) at vent',
       waterVolume: '3,700 – 8,400 gallons',
       thermalType: 'Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Old_Faithful_Geyser_Eruption%2C_Yellowstone_NP_-_2021.jpg/1200px-Old_Faithful_Geyser_Eruption%2C_Yellowstone_NP_-_2021.jpg',
-      imageCaption: 'Old Faithful erupting into a crisp blue sky at Upper Geyser Basin',
-      photographerCredit: 'National Park Service / Wikimedia Commons',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Yellowstone_National_Park_(WY,_USA),_Old_Faithful_Geyser_--_2022_--_2599.jpg',
+      imageCaption: 'Old Faithful erupting in Upper Geyser Basin',
+      photographerCredit: 'Dietmar Rabich / Wikimedia Commons (CC BY-SA 4.0)',
       description: 'Yellowstone’s world-renowned cone geyser, named in 1870 for its clockwork-like eruption intervals.',
       overview: 'Old Faithful is Yellowstone’s most iconic thermal feature, discovered during the 1870 Washburn-Langford-Doane Expedition. It erupts roughly 20 times a day with superheated water plumes reaching up to 185 feet. The park service accurately predicts its next eruption based on the exact duration of the preceding eruption.',
       funFacts: [
@@ -38,14 +61,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'steamboat',
-    geysertimesId: 1,
+    geysertimesId: 163,
     name: 'Steamboat Geyser',
     normalizedName: 'steamboat geyser',
     alternateNames: ['Steamboat'],
     basin: 'Norris Geyser Basin',
     area: 'Back Basin',
-    latitude: 44.7231,
-    longitude: -110.7028,
+    latitude: 44.7234895,
+    longitude: -110.7030023,
     metadata: {
       typicalIntervalMinutes: 10080,
       durationMinutes: 20,
@@ -54,9 +77,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '198°F (92°C)',
       waterVolume: 'Tens of thousands of gallons',
       thermalType: 'Major Cone / Fountain Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Steamboat_Geyser_eruption%2C_Yellowstone_National_Park%2C_2018.jpg/1200px-Steamboat_Geyser_eruption%2C_Yellowstone_National_Park%2C_2018.jpg',
-      imageCaption: 'Steamboat Geyser major eruption in Norris Geyser Basin',
-      photographerCredit: 'USGS / Yellowstone Volcano Observatory',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Steamboatgeyser1.jpg',
+      imageCaption: 'Steamboat Geyser in Norris Geyser Basin',
+      photographerCredit: 'NPS / EE Mackin (public domain)',
       description: 'The tallest active geyser in the world, capable of shooting water higher than the Statue of Liberty.',
       overview: 'Located in the hyper-active Norris Geyser Basin, Steamboat Geyser holds the title of the world’s tallest active geyser. Major eruptions blast boiling water over 300 to 400 feet into the atmosphere for up to 40 minutes, followed by a roaring steam phase lasting up to 24 hours.',
       funFacts: [
@@ -69,14 +92,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'daisy',
-    geysertimesId: 3,
+    geysertimesId: 4,
     name: 'Daisy Geyser',
     normalizedName: 'daisy geyser',
     alternateNames: ['Daisy'],
     basin: 'Upper Geyser Basin',
     area: 'Daisy Group',
-    latitude: 44.4678,
-    longitude: -110.8383,
+    latitude: 44.4701878,
+    longitude: -110.8441868,
     metadata: {
       typicalIntervalMinutes: 140,
       durationMinutes: 3.5,
@@ -85,9 +108,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '201°F (94°C)',
       waterVolume: '~2,500 gallons',
       thermalType: 'Angle Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Daisy_Geyser%2C_Yellowstone_National_Park%2C_2013-08-07.jpg/1200px-Daisy_Geyser%2C_Yellowstone_National_Park%2C_2013-08-07.jpg',
-      imageCaption: 'Daisy Geyser blasting an angled jet of thermal water',
-      photographerCredit: 'NPS / Wikimedia Commons',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Daisy_Geyser_erupting_in_Yellowstone_National_Park_edit.jpg',
+      imageCaption: 'Daisy Geyser erupting at a sharp angle',
+      photographerCredit: 'Brocken Inaglory / Wikimedia Commons (CC BY-SA 3.0)',
       description: 'A highly reliable geyser that erupts at a dramatic 75-degree angle pointing northwest.',
       overview: 'Daisy Geyser is situated in the Daisy Group of the Upper Geyser Basin. Unlike most geysers that erupt straight upward, Daisy shoots a thick blue-white column of boiling water at a distinct 75-degree incline across its basin every 2 to 3 hours.',
       funFacts: [
@@ -99,14 +122,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'castle',
-    geysertimesId: 4,
+    geysertimesId: 5,
     name: 'Castle Geyser',
     normalizedName: 'castle geyser',
     alternateNames: ['Castle'],
     basin: 'Upper Geyser Basin',
     area: 'Castle Group',
-    latitude: 44.4639,
-    longitude: -110.8361,
+    latitude: 44.463668,
+    longitude: -110.836486,
     metadata: {
       typicalIntervalMinutes: 840,
       durationMinutes: 20.0,
@@ -115,9 +138,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '201°F (94°C)',
       waterVolume: '~4,000 gallons',
       thermalType: 'Massive Sinter Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Castle_Geyser_Eruption_Yellowstone_1998-08.jpg/1200px-Castle_Geyser_Eruption_Yellowstone_1998-08.jpg',
-      imageCaption: 'Castle Geyser’s ancient white sinter fortress mound',
-      photographerCredit: 'National Park Service',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Steam_Phase_eruption_of_Castle_geyser_with_double_rainbow.jpg',
+      imageCaption: 'Castle Geyser steam phase with a double rainbow',
+      photographerCredit: 'Brocken Inaglory / Wikimedia Commons (CC BY-SA 3.0)',
       description: 'Boasts the largest and oldest sinter cone structure in the entire Upper Geyser Basin.',
       overview: 'Named for its resemblance to a ruined medieval castle, Castle Geyser erupts approximately every 12 to 14 hours. The eruption features a 20-minute water phase reaching 90 feet, followed by a deafening 1-hour steam engine phase.',
       funFacts: [
@@ -129,14 +152,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'grand',
-    geysertimesId: 5,
+    geysertimesId: 13,
     name: 'Grand Geyser',
     normalizedName: 'grand geyser',
     alternateNames: ['Grand'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4667,
-    longitude: -110.8356,
+    latitude: 44.4666627,
+    longitude: -110.8370021,
     metadata: {
       typicalIntervalMinutes: 390,
       durationMinutes: 12.0,
@@ -145,9 +168,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '200°F (93°C)',
       waterVolume: 'Up to 10,000 gallons per burst cycle',
       thermalType: 'Fountain Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Grand_Geyser_Yellowstone.jpg/1200px-Grand_Geyser_Yellowstone.jpg',
-      imageCaption: 'Grand Geyser’s immense fan-shaped fountain eruption',
-      photographerCredit: 'Wikimedia Commons / Fechicco',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Yellowstone_Grand_Geysir_02.jpg',
+      imageCaption: 'Grand Geyser erupting in Upper Geyser Basin',
+      photographerCredit: 'Stefan Pauli / Wikimedia Commons (CC BY-SA 3.0)',
       description: 'The tallest predictable fountain geyser in the world, erupting in fan-shaped bursts.',
       overview: 'Grand Geyser erupts in a dramatic series of 1 to 4 powerful bursts over 10 minutes. Water explodes out of a large pool in wide fan shapes reaching 200 feet into the air, accompanied by nearby Turban and Vent Geysers.',
       funFacts: [
@@ -159,14 +182,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'riverside',
-    geysertimesId: 6,
+    geysertimesId: 7,
     name: 'Riverside Geyser',
     normalizedName: 'riverside geyser',
     alternateNames: ['Riverside'],
     basin: 'Upper Geyser Basin',
     area: 'Firehole River Area',
-    latitude: 44.4725,
-    longitude: -110.8389,
+    latitude: 44.47347,
+    longitude: -110.8409146,
     metadata: {
       typicalIntervalMinutes: 375,
       durationMinutes: 20.0,
@@ -175,9 +198,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '199°F (93°C)',
       waterVolume: '~5,500 gallons',
       thermalType: 'Riverbank Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/67/Riverside_Geyser_Yellowstone_NP.jpg/1200px-Riverside_Geyser_Yellowstone_NP.jpg',
-      imageCaption: 'Riverside Geyser arching boiling water across the Firehole River',
-      photographerCredit: 'Yellowstone National Park Service',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Rivererside_Geyser_Erupting.jpg',
+      imageCaption: 'Riverside Geyser arching over the Firehole River',
+      photographerCredit: 'Eeekster / Wikimedia Commons (CC BY 4.0)',
       description: 'Arches a picturesque rainbow-draped column of water across the Firehole River.',
       overview: 'Perched on the eastern bank of the Firehole River, Riverside Geyser shoots an angled 80-foot jet of water over the river. Afternoon eruptions frequently generate brilliant double rainbows in the spray.',
       funFacts: [
@@ -189,14 +212,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'great-fountain',
-    geysertimesId: 7,
+    geysertimesId: 16,
     name: 'Great Fountain Geyser',
     normalizedName: 'great fountain geyser',
     alternateNames: ['Great Fountain'],
     basin: 'Lower Geyser Basin',
     area: 'Firehole Lake Drive',
-    latitude: 44.5367,
-    longitude: -110.8033,
+    latitude: 44.536574,
+    longitude: -110.8000526,
     metadata: {
       typicalIntervalMinutes: 660,
       durationMinutes: 45.0,
@@ -205,9 +228,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '198°F (92°C)',
       waterVolume: 'Over 20,000 gallons',
       thermalType: 'Terraced Pool Fountain Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Great_Fountain_Geyser_Yellowstone.jpg/1200px-Great_Fountain_Geyser_Yellowstone.jpg',
-      imageCaption: 'Great Fountain Geyser erupting from layered silica rimstone terraces',
-      photographerCredit: 'USGS / National Park Service',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Great_Fountain_Geyser_Sunset.jpg',
+      imageCaption: 'Great Fountain Geyser erupting at sunset',
+      photographerCredit: 'Flicka / Wikimedia Commons (CC BY-SA 3.0)',
       description: 'Erupts in majestic bursts from a series of stepped rimstone terraces in Lower Geyser Basin.',
       overview: 'Located on Firehole Lake Drive, Great Fountain Geyser erupts from the center of a wide pool rimmed by delicate mineral terraces. Eruptions occur in rhythmic super-bursts over 45 to 60 minutes, with the first burst soaring up to 220 feet.',
       funFacts: [
@@ -219,14 +242,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'beehive',
-    geysertimesId: 8,
+    geysertimesId: 1,
     name: 'Beehive Geyser',
     normalizedName: 'beehive geyser',
     alternateNames: ['Beehive'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4628,
-    longitude: -110.8322,
+    latitude: 44.4626134,
+    longitude: -110.8299965,
     metadata: {
       typicalIntervalMinutes: 960,
       durationMinutes: 5.0,
@@ -235,9 +258,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '203°F (95°C)',
       waterVolume: '~4,000 gallons',
       thermalType: 'Narrow Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Beehive_Geyser_1.jpg/1200px-Beehive_Geyser_1.jpg',
-      imageCaption: 'Beehive Geyser’s high-pressure nozzle column soaring 200 feet high',
-      photographerCredit: 'National Park Service',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Beehive_geyser_2.jpg',
+      imageCaption: 'Beehive Geyser’s narrow high-pressure column',
+      photographerCredit: 'National Park Service (public domain)',
       description: 'A high-pressure nozzle geyser that shoots a soaring 200-foot narrow jet of steam and boiling water.',
       overview: 'Beehive Geyser features a distinct 4-foot tall cone resembling an old-fashioned straw beehive. High underground steam pressures force a roaring 200-foot vertical column of water into the air during its 5-minute performance.',
       funFacts: [
@@ -249,14 +272,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'lone-star',
-    geysertimesId: 9,
+    geysertimesId: 75,
     name: 'Lone Star Geyser',
     normalizedName: 'lone star geyser',
     alternateNames: ['Lone Star'],
     basin: 'Lone Star Basin',
     area: 'Firehole River South',
-    latitude: 44.4339,
-    longitude: -110.8128,
+    latitude: 44.4183661,
+    longitude: -110.8067246,
     metadata: {
       typicalIntervalMinutes: 180,
       durationMinutes: 30.0,
@@ -265,9 +288,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '199°F (93°C)',
       waterVolume: '~2,000 gallons',
       thermalType: 'Solitary Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Lone_Star_Geyser_Yellowstone.jpg/1200px-Lone_Star_Geyser_Yellowstone.jpg',
-      imageCaption: 'Lone Star Geyser’s 12-foot cone in a quiet backcountry pine clearing',
-      photographerCredit: 'NPS Backcountry Trails',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Lone_Star_Geyser_2016.jpg',
+      imageCaption: 'Lone Star Geyser’s cone in a backcountry clearing',
+      photographerCredit: 'Refmarino / Wikimedia Commons (CC BY-SA 4.0)',
       description: 'A serene backcountry geyser reached by a 2.5-mile forest trail along the Firehole River.',
       overview: 'Lone Star Geyser stands alone in a quiet pine clearing south of Old Faithful. Eruptions occur every 3 hours like clockwork, featuring a 30-minute display culminating in a loud steam finale.',
       funFacts: [
@@ -279,14 +302,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'echinus',
-    geysertimesId: 10,
+    geysertimesId: 81,
     name: 'Echinus Geyser',
     normalizedName: 'echinus geyser',
     alternateNames: ['Echinus'],
     basin: 'Norris Geyser Basin',
     area: 'Back Basin',
-    latitude: 44.7258,
-    longitude: -110.7042,
+    latitude: 44.722006,
+    longitude: -110.702055,
     metadata: {
       typicalIntervalMinutes: 540,
       durationMinutes: 4.0,
@@ -295,9 +318,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '195°F (90.5°C)',
       waterVolume: 'Variable pool discharge',
       thermalType: 'Acid-Sulfate Pool Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Echinus_Geyser_Norris_Geyser_Basin.jpg/1200px-Echinus_Geyser_Norris_Geyser_Basin.jpg',
-      imageCaption: 'Echinus Geyser’s spiky red-stained acid pool in Norris Basin',
-      photographerCredit: 'Norris Geyser Basin Observatory',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Echinus_geyser.jpg',
+      imageCaption: 'Echinus Geyser in Norris Geyser Basin',
+      photographerCredit: 'Bryan Harry / NPS (public domain)',
       description: 'The largest acid geyser in the world, with acidic water similar in pH to vinegar.',
       overview: 'Situated in the Back Basin of Norris Geyser Basin, Echinus is famous for its acidic water (pH ~3.5). Its crater is lined with spiky reddish silica crystals that resemble spiny sea urchins (Echinoidea).',
       funFacts: [
@@ -309,14 +332,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'plume',
-    geysertimesId: 11,
+    geysertimesId: 3,
     name: 'Plume Geyser',
     normalizedName: 'plume geyser',
     alternateNames: ['Plume'],
     basin: 'Upper Geyser Basin',
     area: 'Geyser Hill',
-    latitude: 44.4633,
-    longitude: -110.8333,
+    latitude: 44.4627299,
+    longitude: -110.8293979,
     metadata: {
       typicalIntervalMinutes: 85,
       durationMinutes: 3.0,
@@ -325,9 +348,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '200°F (93°C)',
       waterVolume: '~1,200 gallons',
       thermalType: 'Geyser Hill Vent',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Plume_Geyser_Yellowstone.jpg/1200px-Plume_Geyser_Yellowstone.jpg',
-      imageCaption: 'Plume Geyser’s energetic multi-burst eruption on Geyser Hill',
-      photographerCredit: 'NPS / Geyser Hill Survey',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Plume_Geyser_(2_June_2016).jpg',
+      imageCaption: 'Plume Geyser on Geyser Hill',
+      photographerCredit: 'James St. John / Wikimedia Commons (CC BY 2.0)',
       description: 'A frequent Geyser Hill performer shooting energetic 35-foot vertical bursts.',
       overview: 'Plume Geyser is located steps from the boardwalk on Geyser Hill. It erupts every 1 to 2 hours in a quick succession of 3 to 5 loud bursts, sending water 25 to 35 feet high.',
       funFacts: [
@@ -338,14 +361,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'grotto',
-    geysertimesId: 12,
+    geysertimesId: 21,
     name: 'Grotto Geyser',
     normalizedName: 'grotto geyser',
     alternateNames: ['Grotto'],
     basin: 'Upper Geyser Basin',
     area: 'Grotto Group',
-    latitude: 44.4711,
-    longitude: -110.8411,
+    latitude: 44.4718025,
+    longitude: -110.8417597,
     metadata: {
       typicalIntervalMinutes: 420,
       durationMinutes: 120.0,
@@ -354,9 +377,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '198°F (92°C)',
       waterVolume: 'Continuous heavy splash',
       thermalType: 'Arch Sinter Cone Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Grotto_Geyser_Yellowstone_NP.jpg/1200px-Grotto_Geyser_Yellowstone_NP.jpg',
-      imageCaption: 'Grotto Geyser’s bizarre twisted silica arch cone structure',
-      photographerCredit: 'National Park Service',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Grotto_Geyser_erupting_(mid-afternoon,_8_July_2014)_(15106150617).jpg',
+      imageCaption: 'Grotto Geyser erupting from its sinter arches',
+      photographerCredit: 'James St. John / Wikimedia Commons (CC BY 2.0)',
       description: 'Features a strange, hollow petrified arch cone that erupts for hours at a time.',
       overview: 'Grotto Geyser is instantly recognized by its bizarre hollow silica arches. Eruptions are unusually long, splashing water continuously for anywhere from 1 hour to over 10 hours.',
       funFacts: [
@@ -367,14 +390,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'white-dome',
-    geysertimesId: 13,
+    geysertimesId: 65,
     name: 'White Dome Geyser',
     normalizedName: 'white dome geyser',
     alternateNames: ['White Dome'],
     basin: 'Lower Geyser Basin',
     area: 'Firehole Lake Drive',
-    latitude: 44.5383,
-    longitude: -110.8064,
+    latitude: 44.539318,
+    longitude: -110.8028189,
     metadata: {
       typicalIntervalMinutes: 30,
       durationMinutes: 2.0,
@@ -383,9 +406,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '201°F (94°C)',
       waterVolume: '~800 gallons',
       thermalType: 'Massive Silica Dome Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/White_Dome_Geyser_Yellowstone.jpg/1200px-White_Dome_Geyser_Yellowstone.jpg',
-      imageCaption: 'White Dome Geyser’s towering white cone along Firehole Lake Drive',
-      photographerCredit: 'NPS / Firehole Lake Survey',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:White_Dome_Geyser_(Lower_Geyser_Basin,_Yellowstone_National_Park)_2021-08-10,_02.jpg',
+      imageCaption: 'White Dome Geyser along Firehole Lake Drive',
+      photographerCredit: 'Steven Pavlov / Wikimedia Commons (CC BY-SA 4.0)',
       description: 'Boasts a 12-foot bright white sinter mound that erupts frequently every 30 minutes.',
       overview: 'White Dome Geyser sits prominently along Firehole Lake Drive. Its massive 12-foot white mound is one of the thickest cones in the park, shooting a 30-foot burst of water every 20 to 30 minutes.',
       funFacts: [
@@ -396,14 +419,14 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
   },
   {
     id: 'jewel',
-    geysertimesId: 14,
+    geysertimesId: 66,
     name: 'Jewel Geyser',
     normalizedName: 'jewel geyser',
     alternateNames: ['Jewel'],
     basin: 'Upper Geyser Basin',
     area: 'Biscuit Basin',
-    latitude: 44.4856,
-    longitude: -110.8525,
+    latitude: 44.4849062,
+    longitude: -110.8561833,
     metadata: {
       typicalIntervalMinutes: 8.5,
       durationMinutes: 1.0,
@@ -412,9 +435,9 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
       tempFahrenheit: '199°F (93°C)',
       waterVolume: '~500 gallons',
       thermalType: 'Bead Sinter Pool Geyser',
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Jewel_Geyser_Biscuit_Basin_Yellowstone.jpg/1200px-Jewel_Geyser_Biscuit_Basin_Yellowstone.jpg',
-      imageCaption: 'Jewel Geyser’s gem-encrusted silica bead basin in Biscuit Basin',
-      photographerCredit: 'NPS / Biscuit Basin Observers',
+      imageUrl: 'https://commons.wikimedia.org/wiki/File:Jewel_Geyser_Eruption_(33821531885).jpg',
+      imageCaption: 'Jewel Geyser erupting in Biscuit Basin',
+      photographerCredit: 'Jacob W. Frank / NPS (public domain)',
       description: 'Erupts every 7 to 10 minutes surrounded by shiny pearl-like silica sinter beads.',
       overview: 'Jewel Geyser in Biscuit Basin erupts frequently every 7 to 10 minutes. It shoots rapid burst bursts surrounded by shiny black and white cauliflower-like silica pearls.',
       funFacts: [
@@ -424,7 +447,6 @@ const SEED_GEYSERS: Omit<Geyser, 'lastUpdated'>[] = [
     },
   },
 ];
-
 let globalSyncStatus: SyncStatus = {
   lastSyncAt: getSyncMeta('lastSyncAt'),
   status: 'idle',
@@ -441,191 +463,135 @@ export function getGlobalSyncStatus(): SyncStatus {
   return globalSyncStatus;
 }
 
-function getCastleAnchorLastEruption(): Date {
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' };
-  const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
-  const year = parts.find((p) => p.type === 'year')?.value || '2026';
-  const month = parts.find((p) => p.type === 'month')?.value || '08';
-  const day = parts.find((p) => p.type === 'day')?.value || '08';
-
-  // Construct Today at 09:28:00 Mountain Time (MDT = UTC-6 in August)
-  const today928Ms = Date.parse(`${year}-${month}-${day}T09:28:00-06:00`);
-  return new Date(isNaN(today928Ms) ? now.getTime() - 2 * 3600 * 1000 : today928Ms);
+function featuredGeyserTimesIds(): number[] {
+  return SEED_GEYSERS.map((g) => g.geysertimesId);
 }
 
-function getBeehiveAnchorLastEruption(): Date {
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' };
-  const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
-  const year = parts.find((p) => p.type === 'year')?.value || '2026';
-  const month = parts.find((p) => p.type === 'month')?.value || '08';
-  const day = parts.find((p) => p.type === 'day')?.value || '08';
-
-  // Beehive erupted earlier today at 09:00:00 Mountain Time
-  const todayMs = Date.parse(`${year}-${month}-${day}T09:00:00-06:00`);
-  return new Date(isNaN(todayMs) ? now.getTime() - 5 * 3600 * 1000 : todayMs);
-}
-
-/**
- * Generates initial rich historical eruption records for major geysers
- * simulating genuine GeyserTimes historical archives going back several weeks.
- */
-function generateHistoricalEruptionSeed(geyserId: string, intervalMin: number, stdDevMin: number, typicalDuration: number): Eruption[] {
-  const eruptions: Eruption[] = [];
-  const now = new Date();
-
-  let anchorLastMs: number;
-  if (geyserId === 'castle') {
-    anchorLastMs = getCastleAnchorLastEruption().getTime();
-  } else if (geyserId === 'beehive') {
-    anchorLastMs = getBeehiveAnchorLastEruption().getTime();
-  } else if (geyserId === 'old-faithful') {
-    anchorLastMs = now.getTime() - 45 * 60 * 1000;
-  } else if (geyserId === 'daisy') {
-    anchorLastMs = now.getTime() - 60 * 60 * 1000;
-  } else if (geyserId === 'grand') {
-    anchorLastMs = now.getTime() - 120 * 60 * 1000;
-  } else if (geyserId === 'riverside') {
-    anchorLastMs = now.getTime() - 180 * 60 * 1000;
-  } else if (geyserId === 'great-fountain') {
-    anchorLastMs = now.getTime() - 240 * 60 * 1000;
-  } else {
-    anchorLastMs = now.getTime() - Math.floor(intervalMin * 0.4) * 60 * 1000;
+async function fetchGtJson<T>(path: string, timeoutMs = 12000): Promise<T> {
+  const res = await fetch(`${GEYSERTIMES_API_BASE}${path}`, {
+    headers: { 'User-Agent': GT_USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new Error(`GeyserTimes ${path} failed with HTTP ${res.status}`);
   }
+  return (await res.json()) as T;
+}
 
-  // Generate historical records stepping backward for 30 days
-  const minTimeMs = now.getTime() - 30 * 24 * 3600 * 1000;
-  let currentMs = anchorLastMs;
-  let count = 0;
+function ingestEntry(entry: GeyserTimesEntry): boolean {
+  const gtId = Number(entry.geyserID);
+  if (!Number.isFinite(gtId)) return false;
+  const geyser = getGeyserById(String(gtId));
+  if (!geyser) return false;
 
-  while (currentMs >= minTimeMs) {
-    count++;
-    let dur = typicalDuration;
-    let interval = intervalMin;
+  const eruptionTime = parseGtDate(entry.time);
+  if (!eruptionTime) return false;
 
-    if (geyserId === 'old-faithful') {
-      const isLong = Math.random() > 0.35;
-      dur = isLong ? 4.2 + (Math.random() - 0.5) * 0.4 : 2.5 + (Math.random() - 0.5) * 0.4;
-      interval = isLong ? 92 + (Math.random() - 0.5) * 12 : 68 + (Math.random() - 0.5) * 10;
-    } else {
-      interval = intervalMin + (Math.random() - 0.5) * stdDevMin * 2;
-    }
+  const eruptionId = entry.eruptionID ? `gt-${entry.eruptionID}` : `gt-${geyser.id}-${entry.time}`;
+  const flags = entry as unknown as Record<string, unknown>;
 
-    const eruptionTime = new Date(currentMs).toISOString();
-    eruptions.push({
-      id: `${geyserId}-hist-${count}-${currentMs}`,
-      geyserId,
-      eruptionTime,
-      duration: Math.round(dur * 10) / 10,
-      exact: true,
-      approximate: false,
-      electronic: count % 3 === 0,
-      webcam: count % 2 === 0,
-      questionable: false,
-      major: true,
-      minor: false,
-      comment: 'Historical GeyserTimes observation record',
-      importedAt: new Date().toISOString(),
+  upsertEruption({
+    id: eruptionId,
+    geysertimesId: entry.eruptionID ? Number(entry.eruptionID) : undefined,
+    geyserId: geyser.id,
+    eruptionTime,
+    duration: parseDurationMinutes(entry),
+    exact: isGtFlagOn(flags, 'exact'),
+    approximate: isGtFlagOn(flags, 'A', 'a'),
+    electronic: isGtFlagOn(flags, 'E', 'e'),
+    webcam: isGtFlagOn(flags, 'wc'),
+    questionable: isGtFlagOn(flags, 'q'),
+    major: isGtFlagOn(flags, 'maj'),
+    minor: isGtFlagOn(flags, 'min'),
+    initial: isGtFlagOn(flags, 'ini'),
+    comment: entry.comment || '',
+    sourceUpdatedAt: parseGtDate(entry.timeUpdated) || undefined,
+    importedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+function ingestOfficialPredictions(predictions: GeyserTimesPrediction[]) {
+  const fetchedAt = new Date().toISOString();
+  for (const seed of SEED_GEYSERS) {
+    const picked = pickOfficialPrediction(predictions, seed.geysertimesId);
+    if (!picked) continue;
+    const predictedTime = parseGtDate(picked.prediction);
+    if (!predictedTime) continue;
+    const windowStart = parseGtDate(picked.windowOpen) || predictedTime;
+    const windowEnd = parseGtDate(picked.windowClose) || predictedTime;
+    upsertOfficialPrediction({
+      geyserId: seed.id,
+      predictedTime,
+      windowStart,
+      windowEnd,
+      confidence: officialConfidence(picked),
+      probability: Number(picked.probability) || undefined,
+      method: picked.method || 'GeyserTimes.org',
+      comment: picked.comment || '',
+      sourceUser: picked.userName || 'GeyserTimes',
+      lastReportTime: parseGtDate(picked.lastReportTime) || undefined,
+      fetchedAt,
     });
-
-    currentMs -= interval * 60 * 1000;
   }
+}
 
-  return eruptions;
+function shouldRefreshHistory(): boolean {
+  if (getTotalEruptionCount() < 20) return true;
+  const last = getSyncMeta('lastHistorySyncAt');
+  if (!last) return true;
+  const elapsed = Date.now() - new Date(last).getTime();
+  return Number.isNaN(elapsed) || elapsed > HISTORY_RESYNC_MS;
 }
 
 export async function initializeSeedDataIfNeeded() {
   const nowIso = new Date().toISOString();
-
-  console.log('[GeyserTimes] Seeding Yellowstone geysers and anchor eruption records...');
+  console.log('[GeyserTimes] Upserting featured Yellowstone geyser catalog...');
+  remapGeysertimesIds(SEED_GEYSERS.map((g) => ({ id: g.id, geysertimesId: g.geysertimesId })));
   for (const sg of SEED_GEYSERS) {
     upsertGeyser({ ...sg, lastUpdated: nowIso });
   }
-
-  for (const sg of SEED_GEYSERS) {
-    // Clear any previous ghost or stale records for seeded geysers to ensure precise anchor data
-    deleteEruptionsForGeyser(sg.id);
-    const typicalInterval = sg.metadata?.typicalIntervalMinutes || 120;
-    const stdDev = Math.max(5, typicalInterval * 0.1);
-    const typicalDur = sg.metadata?.durationMinutes || 5.0;
-    const records = generateHistoricalEruptionSeed(sg.id, typicalInterval, stdDev, typicalDur);
-    for (const e of records) {
-      upsertEruption(e);
-    }
-  }
-
-  setSyncMeta('lastSyncAt', nowIso);
-  globalSyncStatus.lastSyncAt = nowIso;
 }
 
 /**
- * Incremental GeyserTimes API Sync process
+ * Live GeyserTimes.org API v5 sync: latest eruptions, recent history, official predictions.
  */
 export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   globalSyncStatus.status = 'syncing';
   let addedCount = 0;
 
   try {
-    // 1. Fetch live geysers list from GeyserTimes API
-    const res = await fetch(`${GEYSERTIMES_API_BASE}/getGeysers`, {
-      headers: { 'User-Agent': 'YellowstoneGeyserPredictor/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
+    const ids = featuredGeyserTimesIds().join(';');
 
-    if (res && res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        for (const item of data) {
-          const gId = item.id ? String(item.id) : item.name?.toLowerCase().replace(/\s+/g, '-');
-          if (!gId) continue;
-          upsertGeyser({
-            id: gId,
-            geysertimesId: Number(item.id) || 0,
-            name: item.name || 'Unknown Geyser',
-            normalizedName: (item.name || '').toLowerCase(),
-            alternateNames: item.alternate_names ? item.alternate_names.split(';') : [],
-            basin: item.basin || 'Yellowstone',
-            area: item.area || 'Park',
-            latitude: Number(item.latitude) || 44.4605,
-            longitude: Number(item.longitude) || -110.8281,
-            metadata: { description: item.description || '' },
-            lastUpdated: new Date().toISOString(),
-          });
-        }
-      }
+    const predPayload = await fetchGtJson<{ status?: string; predictions?: GeyserTimesPrediction[] }>(
+      `/predictions_latest?iso=1`
+    );
+    if (Array.isArray(predPayload.predictions)) {
+      ingestOfficialPredictions(predPayload.predictions);
     }
 
-    // 2. Fetch latest eruptions from GeyserTimes API
-    const erupRes = await fetch(`${GEYSERTIMES_API_BASE}/getLatestEruptions`, {
-      headers: { 'User-Agent': 'YellowstoneGeyserPredictor/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
+    const latestPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
+      `/entries_latest/${ids}?iso=1`
+    );
+    for (const entry of latestPayload.entries || []) {
+      if (ingestEntry(entry)) addedCount += 1;
+    }
 
-    if (erupRes && erupRes.ok) {
-      const erupData = await erupRes.json();
-      if (Array.isArray(erupData)) {
-        for (const item of erupData) {
-          const gId = item.geyserID ? String(item.geyserID) : 'old-faithful';
-          const eruptionTime = item.time ? new Date(item.time * 1000).toISOString() : new Date().toISOString();
-          const eId = `gt-${item.id || item.time}`;
-
-          upsertEruption({
-            id: eId,
-            geysertimesId: Number(item.id) || undefined,
-            geyserId: gId,
-            eruptionTime,
-            duration: item.duration ? Number(item.duration) / 60 : undefined,
-            exact: item.exact === '1' || item.exact === 1,
-            approximate: item.approximate === '1' || item.approximate === 1,
-            electronic: item.electronic === '1' || item.electronic === 1,
-            webcam: item.webcam === '1' || item.webcam === 1,
-            questionable: item.questionable === '1' || item.questionable === 1,
-            comment: item.comment || '',
-            importedAt: new Date().toISOString(),
-          });
-          addedCount++;
-        }
+    if (shouldRefreshHistory()) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const fromSec = nowSec - HISTORY_WINDOW_DAYS * 24 * 3600;
+      const historyPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
+        `/entries/${fromSec}/${nowSec}/${ids}?iso=1&primary=1`,
+        20000
+      );
+      let historyCount = 0;
+      for (const entry of historyPayload.entries || []) {
+        if (ingestEntry(entry)) historyCount += 1;
+      }
+      if (historyCount > 0) {
+        deleteSyntheticEruptions();
+        setSyncMeta('lastHistorySyncAt', new Date().toISOString());
+        addedCount += historyCount;
       }
     }
 
@@ -638,7 +604,8 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   } catch (err: any) {
     console.warn('[GeyserTimes Sync Warning]', err?.message || err);
     globalSyncStatus.status = 'error';
-    globalSyncStatus.lastErrorMessage = err?.message || 'GeyserTimes connection timeout. Utilizing local cached repository.';
+    globalSyncStatus.lastErrorMessage =
+      err?.message || 'GeyserTimes connection timeout. Using last local cache.';
   }
 
   return getGlobalSyncStatus();

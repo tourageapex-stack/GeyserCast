@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, RefreshCw, Database, Cpu, CheckCircle2, AlertTriangle, Layers, BarChart } from 'lucide-react';
+import { Activity, RefreshCw, Database, Cpu, CheckCircle2, BarChart } from 'lucide-react';
 import { SyncStatus, BacktestResult } from '../types';
 import { formatTimeInTimezone } from '../utils/time';
 
@@ -28,14 +28,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ syncStatus, onRe
       .finally(() => setLoadingBacktest(false));
   };
 
-  const handleTriggerAction = (actionName: string) => {
-    setActionMessage(`Executing: ${actionName}...`);
-    onRefreshSync();
-    setTimeout(() => {
+  const handleSync = async () => {
+    setActionMessage('Syncing live GeyserTimes.org eruptions and official predictions...');
+    try {
+      const res = await fetch('/api/admin/sync', { method: 'POST' });
+      const status = await res.json();
+      onRefreshSync();
       fetchBacktests();
-      setActionMessage(`Successfully completed ${actionName}. Model parameters updated.`);
-      setTimeout(() => setActionMessage(null), 4000);
-    }, 1500);
+      setActionMessage(
+        status.status === 'error'
+          ? `Sync failed: ${status.lastErrorMessage || 'Unknown error'}`
+          : `Synced ${status.recentAddedCount || 0} GeyserTimes records.`
+      );
+    } catch {
+      setActionMessage('Sync request failed. Check the server logs.');
+    }
+    setTimeout(() => setActionMessage(null), 5000);
+  };
+
+  const handleRetrain = async () => {
+    setActionMessage('Clearing cached statistical model selections...');
+    await fetch('/api/admin/retrain', { method: 'POST' });
+    onRefreshSync();
+    fetchBacktests();
+    setActionMessage('Model cache cleared. Next statistical predictions will re-select models.');
+    setTimeout(() => setActionMessage(null), 4000);
   };
 
   return (
@@ -57,21 +74,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ syncStatus, onRe
         {/* Action Controls */}
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => handleTriggerAction('Sync GeyserTimes Data')}
+            onClick={handleSync}
             className="bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center space-x-1.5 transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Sync GeyserTimes</span>
           </button>
           <button
-            onClick={() => handleTriggerAction('Rebuild Features')}
-            className="bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center space-x-1.5 transition"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Rebuild Features</span>
-          </button>
-          <button
-            onClick={() => handleTriggerAction('Retrain Models')}
+            onClick={handleRetrain}
             className="bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center space-x-1.5 transition"
           >
             <Cpu className="w-3.5 h-3.5 text-amber-400" />
@@ -129,7 +139,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ syncStatus, onRe
             <span>ML Model Engine</span>
             <Cpu className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-lg font-bold text-amber-300 font-mono mt-1">v1.4 EWMA + Bimodal</div>
+          <div className="text-lg font-bold text-amber-300 font-mono mt-1">v2.1 EWMA + Official GT</div>
           <div className="text-[11px] text-stone-400 mt-1">Chronological Backtested</div>
         </div>
       </div>
