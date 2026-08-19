@@ -25,9 +25,12 @@ function originalApiUrl(request: Request): string {
     }
   }
 
-  if (url.pathname === '/api' && url.searchParams.has('path')) {
+  if (url.searchParams.has('path')) {
     const rest = url.searchParams.get('path') || '';
-    return `/api/${rest.replace(/^\/+/, '')}${url.search}`;
+    const qs = new URLSearchParams(url.searchParams);
+    qs.delete('path');
+    const q = qs.toString();
+    return `/api/${rest.replace(/^\/+/, '')}${q ? `?${q}` : ''}`;
   }
 
   return `${url.pathname}${url.search}`;
