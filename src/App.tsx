@@ -609,14 +609,21 @@ export default function App() {
                 <div
                   key={geyser.id}
                   onClick={() => setSelectedGeyserId(geyser.id)}
-                  className="bg-stone-950 border border-stone-800 hover:border-amber-500/50 p-4 rounded-xl cursor-pointer transition space-y-1"
+                  className="bg-stone-950 border border-stone-800 hover:border-amber-500/50 rounded-xl cursor-pointer transition overflow-hidden"
                 >
+                  <img
+                    src={`/api/geyser-photo/${encodeURIComponent(geyser.id)}`}
+                    alt={geyser.name}
+                    className="w-full h-28 object-cover object-center"
+                  />
+                  <div className="p-4 space-y-1">
                   <span className="text-[10px] font-bold text-amber-400 bg-stone-900 px-2 py-0.5 rounded border border-stone-800">
                     {geyser.basin}
                   </span>
                   <h4 className="font-bold text-stone-100 text-base">{geyser.name}</h4>
                   <div className="text-xs text-stone-400 font-mono">
                     Typical interval: ~{prediction.features.historicalMedianMinutes}m
+                  </div>
                   </div>
                 </div>
               ))}

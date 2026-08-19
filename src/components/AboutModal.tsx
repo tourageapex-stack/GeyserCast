@@ -76,6 +76,9 @@ export const AboutModal: React.FC = () => {
           <p className="text-stone-400">
             Gemini AI is used exclusively for natural-language filter translation and answering visitor questions using structured database records. Gemini never invents or guesses numerical eruption times.
           </p>
+          <p className="text-stone-400">
+            Geyser photographs are the real Wikimedia Commons / Wikipedia article images for each feature, proxied by this app. Credits appear on the detail view.
+          </p>
         </div>
 
         {/* Safety Disclaimer */}

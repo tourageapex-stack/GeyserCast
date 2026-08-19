@@ -42,6 +42,18 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
 
   return (
     <div className="bg-stone-900 border border-stone-800 rounded-2xl p-5 shadow-lg hover:border-amber-500/40 transition flex flex-col justify-between space-y-4 text-stone-100">
+      <button
+        type="button"
+        onClick={() => onSelectGeyser(geyser.id)}
+        className="block rounded-xl overflow-hidden border border-stone-800 bg-stone-950"
+      >
+        <img
+          src={`/api/geyser-photo/${encodeURIComponent(geyser.id)}`}
+          alt={geyser.name}
+          className="w-full h-40 object-cover object-center hover:scale-[1.03] transition-transform duration-500"
+        />
+      </button>
+
       {/* Top Header: Geyser Name, Basin & Favorite Button */}
       <div className="flex items-start justify-between gap-3">
         <div>
