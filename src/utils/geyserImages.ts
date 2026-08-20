@@ -9,12 +9,12 @@ export interface GeyserImageData {
 
 export function getGeyserImageData(geyser: { id: string; name: string; metadata?: any }): GeyserImageData {
   const key = matchGeyserPhotoKey(geyser.id);
-  const spec = GEYSER_PHOTOS[key];
+  const spec = key ? GEYSER_PHOTOS[key] : undefined;
 
   return {
     imageUrl: `/api/geyser-photo/${encodeURIComponent(geyser.id)}`,
     fallbackUrl: geyserPhotoPlaceholderDataUri(geyser.name),
-    imageCaption: spec.caption,
-    photographerCredit: spec.credit,
+    imageCaption: spec?.caption || geyser.name,
+    photographerCredit: spec?.credit || '',
   };
 }

@@ -53,7 +53,11 @@ Available Basins in Yellowstone:
 - Lower Geyser Basin
 - Norris Geyser Basin
 - Midway Geyser Basin
+- West Thumb Geyser Basin
 - Lone Star Basin
+- Gibbon Geyser Basin
+- Mud Volcano
+- Shoshone Geyser Basin
 
 Return a JSON object containing any identified parameters.`,
       config: {
@@ -97,22 +101,26 @@ export async function queryGeyserAssistant(userPrompt: string, userLat?: number,
     const geysers = getAllGeysers();
     const now = new Date();
 
-    const currentPredictionsSummary = geysers.map((g) => {
-      const pred = generatePredictionForGeyser(g);
-      const minutesLeft = Math.round((new Date(pred.predictedTime).getTime() - now.getTime()) / (60 * 1000));
-      return {
-        name: g.name,
-        basin: g.basin,
-        predictedTimeUTC: pred.predictedTime,
-        minutesUntilEruption: minutesLeft,
-        windowStartUTC: pred.windowStart,
-        windowEndUTC: pred.windowEnd,
-        confidence: pred.confidence,
-        modelUsed: pred.modelName,
-        historicalMedianMin: pred.features.historicalMedianMinutes,
-        usableObservations: pred.features.usableObservationsCount,
-      };
-    });
+    const currentPredictionsSummary = geysers
+      .map((g) => {
+        const pred = generatePredictionForGeyser(g);
+        const minutesLeft = Math.round((new Date(pred.predictedTime).getTime() - now.getTime()) / (60 * 1000));
+        return {
+          name: g.name,
+          basin: g.basin,
+          predictedTimeUTC: pred.predictedTime,
+          minutesUntilEruption: minutesLeft,
+          windowStartUTC: pred.windowStart,
+          windowEndUTC: pred.windowEnd,
+          confidence: pred.confidence,
+          modelUsed: pred.modelName,
+          historicalMedianMin: pred.features.historicalMedianMinutes,
+          usableObservations: pred.features.usableObservationsCount,
+        };
+      })
+      .filter((row) => row.minutesUntilEruption >= -360 && row.minutesUntilEruption <= 36 * 60)
+      .sort((a, b) => a.minutesUntilEruption - b.minutesUntilEruption)
+      .slice(0, 80);
 
     const ai = getAiClient();
     const promptContext = `You are the official Yellowstone Geyser Assistant. You must ALWAYS use the real structured prediction data provided below to answer visitor questions.

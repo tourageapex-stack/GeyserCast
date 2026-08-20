@@ -6,6 +6,9 @@ import {
   isGtFlagOn,
   pickOfficialPrediction,
   officialConfidence,
+  geyserFromGeyserTimes,
+  slugifyGeyserName,
+  shouldImportGtGeyser,
 } from './geysertimesParse';
 
 describe('parseGtDate', () => {
@@ -85,5 +88,45 @@ describe('pickOfficialPrediction', () => {
   it('maps zero probability to a default confidence', () => {
     const picked = pickOfficialPrediction(rows, 2, now);
     assert.equal(officialConfidence(picked!), 80);
+  });
+});
+
+describe('GeyserTimes catalog mapping', () => {
+  it('imports Yellowstone geysers and slugs names', () => {
+    const lion = geyserFromGeyserTimes({
+      id: '14',
+      name: 'Lion',
+      groupName: 'Common UGB Geysers',
+      latitude: '44.4629',
+      longitude: '-110.8284',
+    });
+    assert.equal(lion?.id, 'lion');
+    assert.equal(lion?.geysertimesId, 14);
+    assert.equal(lion?.basin, 'Upper Geyser Basin');
+    assert.equal(slugifyGeyserName("Beehive's Indicator", 11), 'beehives-indicator');
+  });
+
+  it('skips non-Yellowstone and placeholder rows', () => {
+    assert.equal(
+      geyserFromGeyserTimes({
+        id: '900',
+        name: 'Pohutu',
+        groupName: 'New Zealand',
+        latitude: '-38.2',
+        longitude: '176.4',
+      }),
+      null
+    );
+    assert.equal(
+      geyserFromGeyserTimes({
+        id: '119',
+        name: 'Event Non-Geyser Related',
+        groupName: 'Common UGB Geysers',
+        latitude: '44.46',
+        longitude: '-110.83',
+      }),
+      null
+    );
+    assert.equal(shouldImportGtGeyser({ id: '2', name: 'Old Faithful', groupName: 'Common UGB Geysers', latitude: '44.46', longitude: '-110.83' }), true);
   });
 });

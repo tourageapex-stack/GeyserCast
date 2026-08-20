@@ -75,35 +75,51 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
     userMarker.bindPopup(`<b>Your Current Location</b><br/>Yellowstone Park`);
     markersRef.current['user'] = userMarker;
 
-    // Add Geyser Markers
-    items.forEach((item) => {
+    // Add Geyser Markers. Visitor-window forecasts render last so they sit on top.
+    const sortedItems = [...items].sort((a, b) => {
+      const aLive = a.minutesUntilEruption >= -360 && a.minutesUntilEruption <= 36 * 60;
+      const bLive = b.minutesUntilEruption >= -360 && b.minutesUntilEruption <= 36 * 60;
+      if (aLive === bLive) return 0;
+      return aLive ? 1 : -1;
+    });
+
+    sortedItems.forEach((item) => {
       const { geyser, prediction, minutesUntilEruption, walkRoute, canMakeIt } = item;
+      const inWindow = minutesUntilEruption >= -360 && minutesUntilEruption <= 36 * 60;
 
-      let color = '#3b82f6'; // blue
-      let pulseClass = '';
+      let color = '#57534e';
+      let size = 12;
 
-      if (minutesUntilEruption <= 0) {
-        color = '#ef4444'; // red
-        pulseClass = 'animate-ping';
-      } else if (minutesUntilEruption <= 30) {
-        color = '#f97316'; // orange
-      } else if (minutesUntilEruption <= 60) {
-        color = '#eab308'; // yellow
+      if (inWindow) {
+        size = 22;
+        color = '#3b82f6';
+        if (minutesUntilEruption <= 0) {
+          color = '#ef4444';
+        } else if (minutesUntilEruption <= 30) {
+          color = '#f97316';
+        } else if (minutesUntilEruption <= 60) {
+          color = '#eab308';
+        }
       }
 
-      const iconHtml = `<div style="background-color: ${color}; width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid #ffffff; font-size: 10px; font-weight: bold; color: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.4); position: relative">
+      const pulseClass = inWindow && minutesUntilEruption <= 0 ? 'animate-ping' : '';
+
+      const iconHtml = `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2.5px solid #ffffff; font-size: 10px; font-weight: bold; color: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.4); position: relative">
         <span class="${pulseClass}" style="position: absolute; inset: -3px; border-radius: 50%; background-color: ${color}; opacity: 0.4;"></span>
-        ${geyser.name[0]}
+        ${inWindow ? geyser.name[0] : ''}
       </div>`;
 
       const customIcon = L.divIcon({
         className: 'geyser-pin-marker',
         html: iconHtml,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
       });
 
       const formattedTime = formatTimeWithDayLabel(prediction.predictedTime, use24Hour);
+      const predictionLabel = inWindow
+        ? `Predicted: ${formattedTime} (${minutesUntilEruption > 0 ? `in ${minutesUntilEruption}m` : 'Now'})`
+        : 'No current visitor-window forecast';
 
       const popupContent = document.createElement('div');
       popupContent.className = 'text-stone-900 p-1 font-sans';
@@ -111,13 +127,13 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
         <div style="font-weight: bold; font-size: 14px; color: #b45309;">${geyser.name}</div>
         <div style="font-size: 12px; color: #475569;">${geyser.basin}</div>
         <div style="margin-top: 6px; font-size: 13px; font-weight: bold;">
-          🔥 Predicted: ${formattedTime} (${minutesUntilEruption > 0 ? `in ${minutesUntilEruption}m` : 'Now'})
+          🔥 ${predictionLabel}
         </div>
         <div style="font-size: 11px; margin-top: 4px; color: #0284c7;">
           🚶 Walk: ${walkRoute.durationMinutes} min (${walkRoute.distanceMiles} mi)
         </div>
         <div style="font-size: 11px; font-weight: bold; margin-top: 4px;">
-          ${canMakeIt.label}
+          ${inWindow ? canMakeIt.label : geyser.area}
         </div>
       `;
 
@@ -171,6 +187,10 @@ export const GeyserMap: React.FC<GeyserMapProps> = ({
         <div className="flex items-center space-x-2">
           <span className="w-3 h-3 rounded-full bg-blue-500 inline-block"></span>
           <span>Erupting &gt;60m</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <span className="w-3 h-3 rounded-full bg-stone-500 inline-block"></span>
+          <span>Catalog (no current window)</span>
         </div>
         <div className="flex items-center space-x-2 pt-1 border-t border-stone-800">
           <span className="w-3 h-3 rounded-full bg-sky-600 border border-white inline-block"></span>

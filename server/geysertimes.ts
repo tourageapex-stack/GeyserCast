@@ -13,7 +13,9 @@ import {
 } from './db';
 import {
   GeyserTimesEntry,
+  GeyserTimesGeyser,
   GeyserTimesPrediction,
+  geyserFromGeyserTimes,
   parseGtDate,
   parseDurationMinutes,
   isGtFlagOn,
@@ -511,17 +513,43 @@ function ingestEntry(entry: GeyserTimesEntry): boolean {
   return true;
 }
 
+function ingestGeyserCatalog(gtGeysers: GeyserTimesGeyser[]) {
+  const nowIso = new Date().toISOString();
+  const usedIds = new Set(getAllGeysers().map((g) => g.id));
+
+  for (const raw of gtGeysers) {
+    const parsed = geyserFromGeyserTimes(raw);
+    if (!parsed) continue;
+
+    const existing = getGeyserById(String(parsed.geysertimesId));
+    if (existing) {
+      upsertGeyser({
+        ...existing,
+        lastUpdated: nowIso,
+        latitude: existing.latitude || parsed.latitude,
+        longitude: existing.longitude || parsed.longitude,
+      });
+      continue;
+    }
+
+    let id = parsed.id;
+    if (usedIds.has(id)) id = `${id}-${parsed.geysertimesId}`;
+    usedIds.add(id);
+    upsertGeyser({ ...parsed, id, lastUpdated: nowIso });
+  }
+}
+
 function ingestOfficialPredictions(predictions: GeyserTimesPrediction[]) {
   const fetchedAt = new Date().toISOString();
-  for (const seed of SEED_GEYSERS) {
-    const picked = pickOfficialPrediction(predictions, seed.geysertimesId);
+  for (const geyser of getAllGeysers()) {
+    const picked = pickOfficialPrediction(predictions, geyser.geysertimesId);
     if (!picked) continue;
     const predictedTime = parseGtDate(picked.prediction);
     if (!predictedTime) continue;
     const windowStart = parseGtDate(picked.windowOpen) || predictedTime;
     const windowEnd = parseGtDate(picked.windowClose) || predictedTime;
     upsertOfficialPrediction({
-      geyserId: seed.id,
+      geyserId: geyser.id,
       predictedTime,
       windowStart,
       windowEnd,
@@ -563,6 +591,13 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
   try {
     const ids = featuredGeyserTimesIds().join(';');
 
+    const catalogPayload = await fetchGtJson<{ status?: string; geysers?: GeyserTimesGeyser[] }>(
+      `/geysers`
+    );
+    if (Array.isArray(catalogPayload.geysers)) {
+      ingestGeyserCatalog(catalogPayload.geysers);
+    }
+
     const predPayload = await fetchGtJson<{ status?: string; predictions?: GeyserTimesPrediction[] }>(
       `/predictions_latest?iso=1`
     );
@@ -570,9 +605,12 @@ export async function syncWithGeyserTimes(): Promise<SyncStatus> {
       ingestOfficialPredictions(predPayload.predictions);
     }
 
-    const latestPayload = await fetchGtJson<{ status?: string; entries?: GeyserTimesEntry[] }>(
-      `/entries_latest/${ids}?iso=1`
-    );
+    let latestPayload: { status?: string; entries?: GeyserTimesEntry[] };
+    try {
+      latestPayload = await fetchGtJson(`/entries_latest?iso=1`);
+    } catch {
+      latestPayload = await fetchGtJson(`/entries_latest/${ids}?iso=1`);
+    }
     for (const entry of latestPayload.entries || []) {
       if (ingestEntry(entry)) addedCount += 1;
     }

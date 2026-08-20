@@ -53,7 +53,8 @@ function createApiRouter(): Router {
     res.json({ ok: true, geysers: getAllGeysers().length });
   });
 
-  r.get('/geysers', (_req, res) => {
+  r.get('/geysers', async (_req, res) => {
+    await waitForSync();
     res.json(getAllGeysers());
   });
 
@@ -65,12 +66,14 @@ function createApiRouter(): Router {
     res.json(geyser);
   });
 
-  r.get('/basins', (_req, res) => {
+  r.get('/basins', async (_req, res) => {
+    await waitForSync();
     const basins = Array.from(new Set(getAllGeysers().map((g) => g.basin))).sort();
     res.json(basins);
   });
 
-  r.get('/areas', (_req, res) => {
+  r.get('/areas', async (_req, res) => {
+    await waitForSync();
     const areas = Array.from(new Set(getAllGeysers().map((g) => g.area))).sort();
     res.json(areas);
   });
@@ -224,7 +227,9 @@ function createApiRouter(): Router {
 
   r.get('/admin/backtest', (_req, res) => {
     res.json(
-      getAllGeysers().map((g) => runBacktestForGeyser(g, getEruptionsForGeyser(g.id, 200), 'EWMA'))
+      getAllGeysers()
+        .filter((g) => Array.isArray(g.metadata?.funFacts) || getEruptionsForGeyser(g.id, 20).length >= 10)
+        .map((g) => runBacktestForGeyser(g, getEruptionsForGeyser(g.id, 200), 'EWMA'))
     );
   });
 
