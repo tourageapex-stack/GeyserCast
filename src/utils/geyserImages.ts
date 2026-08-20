@@ -1,4 +1,9 @@
-import { GEYSER_PHOTOS, matchGeyserPhotoKey, geyserPhotoPlaceholderDataUri } from '../data/geyserPhotos';
+import {
+  GEYSER_PHOTOS,
+  matchGeyserPhotoKey,
+  geyserPhotoPlaceholderDataUri,
+  geyserPhotoUrl,
+} from '../data/geyserPhotos';
 
 export interface GeyserImageData {
   imageUrl: string;
@@ -12,7 +17,7 @@ export function getGeyserImageData(geyser: { id: string; name: string; metadata?
   const spec = key ? GEYSER_PHOTOS[key] : undefined;
 
   return {
-    imageUrl: `/api/geyser-photo/${encodeURIComponent(geyser.id)}`,
+    imageUrl: geyserPhotoUrl(geyser),
     fallbackUrl: geyserPhotoPlaceholderDataUri(geyser.name),
     imageCaption: spec?.caption || geyser.name,
     photographerCredit: spec?.credit || '',
