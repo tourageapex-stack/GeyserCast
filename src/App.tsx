@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Filter, RefreshCw, SlidersHorizontal, MapPin, Heart, Bell, X, Check, Flame, Clock, ArrowUpDown, Navigation } from 'lucide-react';
+import { Search, Filter, RefreshCw, SlidersHorizontal, MapPin, Heart, Bell, X, Check, Flame, Clock, ArrowUpDown, Navigation, Layers } from 'lucide-react';
 import { Header } from './components/Header';
 import { PredictionCard } from './components/PredictionCard';
 import { GeyserMap } from './components/GeyserMap';
@@ -8,7 +8,9 @@ import { ItineraryPlanner } from './components/ItineraryPlanner';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AboutModal } from './components/AboutModal';
-import { UpcomingGeyserItem, FilterState, SyncStatus, Geyser } from './types';
+import { UpcomingGeyserItem, FilterState, SyncStatus } from './types';
+import { isPredictableUpcoming } from './utils/geyserActivity';
+import { geyserPhotoUrl } from './data/geyserPhotos';
 
 async function readApiJson<T>(response: Response, label: string): Promise<T> {
   const contentType = response.headers.get('content-type') || '';
@@ -62,6 +64,7 @@ export default function App() {
 
   const [selectedGeyserId, setSelectedGeyserId] = useState<string | null>(null);
   const [showFilterDrawer, setShowFilterDrawer] = useState<boolean>(false);
+  const [showQuietGeysers, setShowQuietGeysers] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Dynamic filter lists
@@ -291,6 +294,16 @@ export default function App() {
       })
       .sort((a, b) => a.geyser.name.localeCompare(b.geyser.name));
   }, [items, filters.searchQuery, filters.selectedBasins, filters.onlyFavorites, favorites]);
+
+  const predictableItems = useMemo(
+    () => filteredItems.filter(isPredictableUpcoming),
+    [filteredItems]
+  );
+
+  const quietItems = useMemo(() => {
+    const predictableIds = new Set(predictableItems.map((item) => item.geyser.id));
+    return catalogItems.filter((item) => !predictableIds.has(item.geyser.id));
+  }, [catalogItems, predictableItems]);
 
   const notifiedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -551,17 +564,78 @@ export default function App() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between text-xs text-stone-400 gap-2">
               <span className="font-semibold text-stone-300">
-                Showing {filteredItems.length} predicted eruptions
+                Showing {predictableItems.length} predictable erupting-soon geysers
               </span>
-              <span className="flex items-center space-x-1 text-amber-400 font-medium bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-lg">
-                <ArrowUpDown className="w-3 h-3" />
-                <span>
-                  {filters.sortBy === 'time'
-                    ? 'Sorted by earliest eruption time (closest distance tie-breaker)'
-                    : 'Sorted by closest distance (earliest time tie-breaker)'}
+              <div className="flex items-center flex-wrap gap-2">
+                <button
+                  onClick={() => setShowQuietGeysers((open) => !open)}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border font-bold transition ${
+                    showQuietGeysers
+                      ? 'bg-stone-800 border-amber-500 text-amber-300'
+                      : 'bg-stone-900 border-stone-700 text-stone-300 hover:border-stone-500'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Quiet geysers</span>
+                  <span className="bg-stone-950 text-amber-400 px-1.5 py-0.5 rounded-md font-mono">
+                    {quietItems.length}
+                  </span>
+                </button>
+                <span className="flex items-center space-x-1 text-amber-400 font-medium bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-lg">
+                  <ArrowUpDown className="w-3 h-3" />
+                  <span>
+                    {filters.sortBy === 'time'
+                      ? 'Sorted by earliest eruption time (closest distance tie-breaker)'
+                      : 'Sorted by closest distance (earliest time tie-breaker)'}
+                  </span>
                 </span>
-              </span>
+              </div>
             </div>
+
+            {showQuietGeysers && (
+              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-stone-400">
+                    Less-active and irregular features stay here so Erupting Soon stays on predictable windows.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab('all')}
+                    className="text-[11px] font-bold text-amber-400 hover:text-amber-300"
+                  >
+                    Open full catalog
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                  {quietItems.slice(0, 36).map(({ geyser, prediction }) => (
+                    <button
+                      key={geyser.id}
+                      onClick={() => setSelectedGeyserId(geyser.id)}
+                      className="flex items-center space-x-2 text-left bg-stone-950 border border-stone-800 hover:border-amber-500/50 rounded-xl px-2 py-2"
+                    >
+                      <img
+                        src={geyserPhotoUrl(geyser)}
+                        alt=""
+                        className="w-10 h-10 rounded-lg object-cover shrink-0 bg-stone-900"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-stone-100 truncate">{geyser.name}</div>
+                        <div className="text-[10px] text-stone-500 truncate">
+                          {geyser.basin} · typical ~{prediction.features.historicalMedianMinutes}m
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {quietItems.length > 36 && (
+                  <button
+                    onClick={() => setActiveTab('all')}
+                    className="w-full text-center text-[11px] font-bold text-amber-400 hover:text-amber-300"
+                  >
+                    View all {quietItems.length} quiet geysers
+                  </button>
+                )}
+              </div>
+            )}
 
             {loading ? (
               <div className="p-12 text-center text-amber-400 font-bold animate-pulse">
@@ -574,7 +648,7 @@ export default function App() {
                   Retry
                 </button>
               </div>
-            ) : filteredItems.length === 0 ? (
+            ) : predictableItems.length === 0 ? (
               <div className="p-12 text-center bg-stone-900 rounded-2xl border border-stone-800 text-stone-400 space-y-2">
                 <p className="font-bold text-stone-200">No geyser predictions match your active filters.</p>
                 <button
@@ -586,7 +660,7 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredItems.map((item) => (
+                {predictableItems.map((item) => (
                   <PredictionCard
                     key={item.geyser.id}
                     item={item}
@@ -598,6 +672,17 @@ export default function App() {
                     onSelectGeyser={setSelectedGeyserId}
                     isFollowed={followed.includes(item.geyser.id)}
                     onToggleFollow={handleToggleFollow}
+                    onShowOnMap={(id) => {
+                      setSelectedGeyserId(id);
+                      setActiveTab('map');
+                    }}
+                    onPlanVisit={(id) => {
+                      setSelectedGeyserId(id);
+                      setActiveTab('itinerary');
+                      showToast(`Opened itinerary planner for ${item.geyser.name}`);
+                    }}
+                    userLat={userLat}
+                    userLon={userLon}
                   />
                 ))}
               </div>
@@ -640,7 +725,7 @@ export default function App() {
                   className="bg-stone-950 border border-stone-800 hover:border-amber-500/50 rounded-xl cursor-pointer transition overflow-hidden"
                 >
                   <img
-                    src={`/api/geyser-photo/${encodeURIComponent(geyser.id)}`}
+                    src={geyserPhotoUrl(geyser)}
                     alt={geyser.name}
                     className="w-full h-28 object-cover object-center"
                   />
